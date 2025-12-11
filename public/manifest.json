@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "自定义新标签页",
+  "version": "1.0",
+  "description": "重写Chrome新标签页，包含必应搜索和可编辑的网站导航",
+  "chrome_url_overrides": {
+    "newtab": "index.html"
+  },
+  "permissions": [
+    "storage"
+  ],
+  "icons": {
+    "16": "icon16.png",
+    "32": "icon32.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

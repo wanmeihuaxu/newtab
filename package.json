@@ -1,0 +1,24 @@
+{
+  "name": "newtab",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "build:crx": "vite build && crx pack dist -o newtab.crx",
+    "convert-icon": "magick icon.png -resize 16x16 public/icon16.png && magick icon.png -resize 32x32 public/icon32.png && magick icon.png -resize 48x48 public/icon48.png && magick icon.png -resize 128x128 public/icon128.png"
+  },
+  "dependencies": {
+    "vue": "^3.5.24"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.1",
+    "crx": "^5.0.1",
+    "vite": "npm:rolldown-vite@7.2.5"
+  },
+  "overrides": {
+    "vite": "npm:rolldown-vite@7.2.5"
+  }
+}
