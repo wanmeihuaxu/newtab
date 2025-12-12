@@ -19,10 +19,6 @@
       </div>
       
       <div class="nav-section" :style="{ backgroundColor: `rgba(255, 255, 255, ${navOpacity})` }">
-        <div class="nav-header">
-          <h2>网站导航</h2>
-          <button id="add-site-btn" @click="openEditModal(null)">添加网站</button>
-        </div>
         <div class="nav-grid" id="nav-grid">
           <div 
             v-for="(site, index) in sites" 
@@ -38,7 +34,7 @@
             :data-index="index"
           >
             <span class="edit-icon" @click.stop="openEditModal(index)">✎</span>
-            <img class="site-icon" :src="site.icon || `https://www.google.com/s2/favicons?domain=${site.url}&sz=64`" :alt="site.name">
+            <img class="site-icon" :src="siteIcons[site.icon] || site.icon || `https://www.google.com/s2/favicons?domain=${site.url}&sz=64`" :alt="site.name">
             <span class="site-name">{{ site.name }}</span>
           </div>
         </div>
@@ -58,10 +54,6 @@
           <div class="form-group">
             <label for="site-url">网站URL:</label>
             <input type="url" id="site-url" v-model="formData.url" required>
-          </div>
-          <div class="form-group">
-            <label for="site-icon">网站图标URL (可选):</label>
-            <input type="url" id="site-icon" v-model="formData.icon">
           </div>
           <div class="form-actions">
             <button 
@@ -91,22 +83,22 @@
               <div class="background-preview default-bg" @click="setDefaultBackground"></div>
             </div>
             <div class="background-option-item">
-              <h5>自定义图片URL</h5>
-              <form id="background-form" @submit.prevent="handleBackgroundSubmit">
-                <div class="form-group">
-                  <label for="bg-url">图片URL:</label>
-                  <input type="url" id="bg-url" v-model="bgUrl" placeholder="输入背景图片URL">
-                </div>
-                <div class="form-actions">
-                  <button type="submit">应用</button>
-                </div>
-              </form>
+              <h5>本地上传图片</h5>
+              <!-- 图片预览 -->
+              <div class="image-preview-container" v-if="imagePreview">
+                <h6>图片预览:</h6>
+                <div class="image-preview" :style="{ backgroundImage: `url('${imagePreview}')` }"></div>
+              </div>
+              <div class="form-group">
+                <label for="bg-file">选择图片:</label>
+                <input type="file" id="bg-file" accept="image/*" @change="handleFileUpload">
+              </div>
             </div>
           </div>
           <div class="background-option">
             <h4>透明度设置</h4>
             <div class="form-group">
-              <label for="opacity-slider">不透明度: {{ opacity * 100 }}%</label>
+              <label for="opacity-slider">不透明度: {{ Math.round((Number(opacity) || 0) * 100) }}%</label>
               <input 
                 type="range" 
                 id="opacity-slider" 
@@ -141,6 +133,16 @@
 <script setup>
 import { ref, onMounted, watch } from 'vue';
 
+// 引入localforage
+import localforage from 'localforage';
+
+// 初始化localforage
+localforage.config({
+  name: 'NewTab',
+  storeName: 'localDatas',
+  description: '存储新标签页的背景图片'
+});
+
 // 全局变量
 const sites = ref([]);
 const currentEditIndex = ref(null);
@@ -148,10 +150,11 @@ const backgroundImage = ref(null);
 const showEditModal = ref(false);
 const showBackgroundModal = ref(false);
 const formData = ref({ name: '', url: '', icon: '' });
-const bgUrl = ref('');
+const imagePreview = ref(null); // 图片预览URL
 const opacity = ref(0.9); // 透明度，默认0.9
 const navOpacity = ref(opacity.value); // 导航区透明度
 const settingsOpacity = ref(opacity.value); // 设置按钮透明度
+const siteIcons = ref({}); // 存储图标映射，键为site.icon，值为base64图标数据
 
 // 初始化
 onMounted(() => {
@@ -161,41 +164,38 @@ onMounted(() => {
 });
 
 // 从Chrome存储加载网站数据
-function loadSites() {
-  chrome.storage.sync.get(['sites'], (result) => {
+async function loadSites() {
+  chrome.storage.sync.get(['sites'], async (result) => {
     console.log('从Chrome存储加载的网站数据:', result);
     let loadedSites = result.sites;
     
     if (loadedSites && Array.isArray(loadedSites) && loadedSites.length > 0) {
+      // 加载站点数据，不直接修改sites数组的icon属性
       sites.value = loadedSites;
-    } else {
-      // 默认网站数据
-      sites.value = [
-        {
-          name: '谷歌',
-          url: 'https://www.google.com',
-          icon: 'https://www.google.com/favicon.ico'
-        },
-        {
-          name: '必应',
-          url: 'https://www.bing.com',
-          icon: 'https://www.bing.com/favicon.ico'
-        },
-        {
-          name: '百度',
-          url: 'https://www.baidu.com',
-          icon: 'https://www.baidu.com/favicon.ico'
-        },
-        {
-          name: 'GitHub',
-          url: 'https://github.com',
-          icon: 'https://github.com/favicon.ico'
+      
+      // 重置图标映射
+      siteIcons.value = {};
+      
+      // 为每个站点加载图标
+      for (let i = 0; i < sites.value.length; i++) {
+        const site = sites.value[i];
+        if (site.icon && !site.icon.startsWith('http')) {
+          // 如果图标是存储键（不是URL），从localforage获取图标
+          try {
+            const iconBase64 = await localforage.getItem(site.icon);
+            if (iconBase64) {
+              // 将图标存储到siteIcons映射中，不修改原始sites数组
+              siteIcons.value[site.icon] = iconBase64;
+            }
+          } catch (error) {
+            console.error(`获取站点图标失败: ${site.name}`, error);
+          }
         }
-      ];
-      saveSites();
+      }
     }
     
     console.log('最终加载的网站数据:', sites.value);
+    console.log('加载的图标映射:', siteIcons.value);
   });
 }
 
@@ -209,18 +209,33 @@ function saveSites() {
   });
 }
 
-// 从Chrome存储加载背景图片
+// 从localforage加载背景图片
 function loadBackgroundImage() {
-  chrome.storage.sync.get(['backgroundImage'], (result) => {
-    backgroundImage.value = result.backgroundImage;
-    applyBackgroundImage();
+  // 直接从localforage获取背景图片URL
+  localforage.getItem('backgroundImage').then((backgroundImageUrl) => {
+    backgroundImage.value = backgroundImageUrl;
+    
+    // 如果有URL且不是DataURL，尝试从localforage获取缓存的图片
+    if (backgroundImageUrl && !backgroundImageUrl.startsWith('data:')) {
+      localforage.getItem(backgroundImageUrl).then((cachedImage) => {
+        if (cachedImage) {
+          // 使用缓存的图片
+          backgroundImage.value = cachedImage;
+        }
+        applyBackgroundImage();
+      });
+    } else {
+      // 没有URL或已经是DataURL，直接应用
+      applyBackgroundImage();
+    }
   });
 }
 
-// 保存背景图片到Chrome存储
+// 保存背景图片到localforage
 function saveBackgroundImage() {
-  chrome.storage.sync.set({ backgroundImage: backgroundImage.value }, () => {
-    console.log('背景图片已保存');
+  // 保存背景图片URL到localforage
+  localforage.setItem('backgroundImage', backgroundImage.value).then(() => {
+    console.log('背景图片URL已保存到localforage');
   });
 }
 
@@ -382,7 +397,7 @@ function closeEditModal() {
 // 关闭背景弹窗
 function closeBackgroundModal() {
   showBackgroundModal.value = false;
-  bgUrl.value = '';
+  imagePreview.value = null;
 }
 
 // 打开背景弹窗
@@ -391,11 +406,16 @@ function openBackgroundModal() {
 }
 
 // 处理表单提交
-function handleFormSubmit() {
+async function handleFormSubmit() {
+  const siteName = formData.value.name.trim();
+  const siteUrl = formData.value.url.trim();
+  const iconBase64 = formData.value.icon.trim() || '';
+  
+  // 创建网站对象
   const site = {
-    name: formData.value.name.trim(),
-    url: formData.value.url.trim(),
-    icon: formData.value.icon.trim() || ''
+    name: siteName,
+    url: siteUrl,
+    icon: iconBase64 // 先保存完整的base64数据到内存中
   };
   
   if (currentEditIndex.value === null) {
@@ -406,6 +426,7 @@ function handleFormSubmit() {
     sites.value[currentEditIndex.value] = site;
   }
   
+  // 保存网站数据到Chrome存储
   saveSites();
   closeEditModal();
 }
@@ -421,27 +442,45 @@ function handleDelete() {
   }
 }
 
-// 处理背景表单提交
-function handleBackgroundSubmit() {
-  if (bgUrl.value.trim()) {
-    setBackgroundImage(bgUrl.value.trim());
-    closeBackgroundModal();
-  }
-}
-
-// 设置背景图片
-function setBackgroundImage(url) {
-  backgroundImage.value = url;
-  applyBackgroundImage();
-  saveBackgroundImage();
-}
-
 // 设置默认背景
 function setDefaultBackground() {
   backgroundImage.value = null;
   applyBackgroundImage();
   saveBackgroundImage();
   closeBackgroundModal();
+}
+
+// 处理本地文件上传
+function handleFileUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  
+  // 检查文件类型是否为图片
+  if (!file.type.startsWith('image/')) {
+    alert('请选择图片文件！');
+    return;
+  }
+  
+  // 读取文件并转换为DataURL
+  const reader = new FileReader();
+  
+  reader.onload = (e) => {
+    const dataUrl = e.target.result;
+    // 显示图片预览
+    imagePreview.value = dataUrl;
+    // 设置为背景图片
+    backgroundImage.value = dataUrl;
+    applyBackgroundImage();
+    saveBackgroundImage();
+    // 不自动关闭弹窗
+  };
+  
+  reader.onerror = () => {
+    alert('图片读取失败，请重试！');
+  };
+  
+  // 读取文件
+  reader.readAsDataURL(file);
 }
 
 // 拖拽事件处理

@@ -11,6 +11,7 @@
     "convert-icon": "magick icon.png -resize 16x16 public/icon16.png && magick icon.png -resize 32x32 public/icon32.png && magick icon.png -resize 48x48 public/icon48.png && magick icon.png -resize 128x128 public/icon128.png"
   },
   "dependencies": {
+    "localforage": "^1.10.0",
     "vue": "^3.5.24"
   },
   "devDependencies": {
