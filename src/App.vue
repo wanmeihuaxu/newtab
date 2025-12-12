@@ -270,36 +270,51 @@ function updateOpacity() {
 }
 
 // 导出数据到JSON文件
-function exportData() {
-  // 准备要导出的数据
-  const exportData = {
-    sites: sites.value,
-    backgroundImage: backgroundImage.value,
-    opacity: opacity.value,
-    exportDate: new Date().toISOString()
-  };
-  
-  // 创建JSON字符串
-  const jsonString = JSON.stringify(exportData, null, 2);
-  
-  // 创建Blob对象
-  const blob = new Blob([jsonString], { type: 'application/json' });
-  
-  // 创建下载链接
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `newtab-export-${new Date().toISOString().slice(0, 10)}.json`;
-  
-  // 触发下载
-  document.body.appendChild(a);
-  a.click();
-  
-  // 清理
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  
-  console.log('数据已导出');
+async function exportData() {
+  try {
+    // 从localforage获取所有图标数据
+    const allIcons = {};
+    await localforage.iterate((value, key) => {
+      // 只导出图标数据（键以icon-开头）
+      if (key.startsWith('icon-')) {
+        allIcons[key] = value;
+      }
+    });
+    
+    // 准备要导出的数据
+    const exportData = {
+      sites: sites.value,
+      backgroundImage: backgroundImage.value,
+      opacity: opacity.value,
+      siteIcons: allIcons, // 包含所有图标数据
+      exportDate: new Date().toISOString()
+    };
+    
+    // 创建JSON字符串
+    const jsonString = JSON.stringify(exportData, null, 2);
+    
+    // 创建Blob对象
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    
+    // 创建下载链接
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `newtab-export-${new Date().toISOString().slice(0, 10)}.json`;
+    
+    // 触发下载
+    document.body.appendChild(a);
+    a.click();
+    
+    // 清理
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    console.log('数据已导出，包含', Object.keys(allIcons).length, '个图标');
+  } catch (error) {
+    console.error('导出数据失败:', error);
+    alert('导出数据失败，请重试！');
+  }
 }
 
 // 触发导入文件选择
@@ -308,13 +323,13 @@ function triggerImport() {
 }
 
 // 导入数据
-function importData(event) {
+async function importData(event) {
   const file = event.target.files[0];
   if (!file) return;
   
   const reader = new FileReader();
   
-  reader.onload = (e) => {
+  reader.onload = async (e) => {
     try {
       const importData = JSON.parse(e.target.result);
       
@@ -330,6 +345,26 @@ function importData(event) {
             updateOpacity();
           }
           
+          // 导入图标数据到localforage
+          if (importData.siteIcons && typeof importData.siteIcons === 'object') {
+            const iconKeys = Object.keys(importData.siteIcons);
+            console.log('准备导入', iconKeys.length, '个图标');
+            
+            // 先清空现有的图标数据
+            await clearAllIcons();
+            
+            // 逐个保存图标数据
+            for (const key of iconKeys) {
+              if (key.startsWith('icon-')) {
+                await localforage.setItem(key, importData.siteIcons[key]);
+              }
+            }
+            
+            // 更新siteIcons映射
+            siteIcons.value = { ...importData.siteIcons };
+            console.log('成功导入', iconKeys.length, '个图标');
+          }
+          
           // 保存到Chrome存储
           saveSites();
           saveBackgroundImage();
@@ -339,6 +374,7 @@ function importData(event) {
           applyBackgroundImage();
           
           console.log('数据已导入');
+          alert('数据导入成功！');
         }
       } else {
         alert('导入的数据格式不正确');
@@ -353,6 +389,15 @@ function importData(event) {
   
   // 重置文件输入，以便下次可以再次选择同一文件
   event.target.value = '';
+}
+
+// 清空所有图标数据
+async function clearAllIcons() {
+  await localforage.iterate((value, key) => {
+    if (key.startsWith('icon-')) {
+      return localforage.removeItem(key);
+    }
+  });
 }
 
 // 应用背景图片
