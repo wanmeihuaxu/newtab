@@ -34,7 +34,7 @@
             :data-index="index"
           >
             <span class="edit-icon" @click.stop="openEditModal(index)">✎</span>
-            <img class="site-icon" :src="siteIcons[site.icon] || site.icon || `https://www.google.com/s2/favicons?domain=${site.url}&sz=64`" :alt="site.name">
+            <img class="site-icon" :src="siteIcons[site.icon] || 'icon48.png'" :alt="site.name">
             <span class="site-name">{{ site.name }}</span>
           </div>
         </div>
@@ -164,8 +164,8 @@ onMounted(() => {
 });
 
 // 从Chrome存储加载网站数据
-async function loadSites() {
-  chrome.storage.sync.get(['sites'], async (result) => {
+function loadSites() {
+  chrome.storage.sync.get(['sites'], (result) => {
     console.log('从Chrome存储加载的网站数据:', result);
     let loadedSites = result.sites;
     
@@ -177,21 +177,21 @@ async function loadSites() {
       siteIcons.value = {};
       
       // 为每个站点加载图标
-      for (let i = 0; i < sites.value.length; i++) {
-        const site = sites.value[i];
+      sites.value.forEach(site => {
         if (site.icon && !site.icon.startsWith('http')) {
           // 如果图标是存储键（不是URL），从localforage获取图标
-          try {
-            const iconBase64 = await localforage.getItem(site.icon);
-            if (iconBase64) {
-              // 将图标存储到siteIcons映射中，不修改原始sites数组
-              siteIcons.value[site.icon] = iconBase64;
-            }
-          } catch (error) {
-            console.error(`获取站点图标失败: ${site.name}`, error);
-          }
+          localforage.getItem(site.icon)
+            .then(iconBase64 => {
+              if (iconBase64) {
+                // 将图标存储到siteIcons映射中，不修改原始sites数组
+                siteIcons.value[site.icon] = iconBase64;
+              }
+            })
+            .catch(error => {
+              console.error(`获取站点图标失败: ${site.name}`, error);
+            });
         }
-      }
+      });
     }
     
     console.log('最终加载的网站数据:', sites.value);
