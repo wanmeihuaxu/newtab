@@ -1,7 +1,15 @@
 <template>
   <div class="app-container">
-    <!-- 设置按钮 -->
+    <!-- 历史记录和设置按钮 -->
     <div class="settings-btn-container">
+      <!-- 历史记录按钮 -->
+      <button 
+        id="history-btn" 
+        class="settings-btn" 
+        @click="toggleHistorySidebar"
+        :style="{ backgroundColor: `rgba(255, 255, 255, ${settingsOpacity})` }"
+      >📜</button>
+      <!-- 设置按钮 -->
       <button 
         id="settings-btn" 
         class="settings-btn" 
@@ -10,10 +18,55 @@
       >⚙️</button>
     </div>
     
+    <!-- 历史记录弹窗遮罩层 -->
+    <div 
+      class="sidebar-overlay" 
+      v-if="showHistorySidebar"
+      @click="toggleHistorySidebar"
+    ></div>
+    
+    <!-- 历史记录侧边栏 -->
+    <div class="history-sidebar" :class="{ 'sidebar-open': showHistorySidebar }">
+      <div class="sidebar-header">
+        <h3>浏览历史</h3>
+        <button class="sidebar-close-btn" @click="toggleHistorySidebar">×</button>
+      </div>
+      <div class="sidebar-content">
+        <!-- 搜索框 -->
+        <div class="search-box">
+          <input 
+            type="text" 
+            id="history-search" 
+            placeholder="搜索浏览历史..." 
+            v-model="historySearchQuery"
+            @input="searchHistory"
+          >
+        </div>
+        <!-- 历史记录列表 -->
+        <div class="history-list">
+          <div 
+            class="history-item" 
+            v-for="(item, index) in filteredHistory" 
+            :key="index"
+            @click="openHistoryItem(item)"
+          >
+            <div class="history-item-content">
+              <div class="history-item-title">{{ item.title || item.url }}</div>
+              <div class="history-item-url">{{ item.url }}</div>
+              <div class="history-item-time">{{ formatDate(item.lastVisitTime) }}</div>
+            </div>
+          </div>
+          <div class="no-history" v-if="filteredHistory.length === 0">
+            {{ historySearchQuery ? '没有找到匹配的历史记录' : '没有浏览历史记录' }}
+          </div>
+        </div>
+      </div>
+    </div>
+    
     <div class="container">
       <div class="search-section">
-        <form id="bing-search" action="https://www.bing.com/search" method="get" target="_self">
-          <input type="text" name="q" id="search-input" placeholder="在必应中搜索..." autocomplete="off">
+        <form id="bing-search" @submit.prevent="handleSearchSubmit">
+          <input type="text" name="q" id="search-input" placeholder="在必应中搜索..." autocomplete="off" v-model="searchQuery">
           <button type="submit" id="search-btn">搜索</button>
         </form>
       </div>
@@ -156,12 +209,96 @@ const navOpacity = ref(opacity.value); // 导航区透明度
 const settingsOpacity = ref(opacity.value); // 设置按钮透明度
 const siteIcons = ref({}); // 存储图标映射，键为site.icon，值为base64图标数据
 
+// 历史记录相关变量
+const showHistorySidebar = ref(false); // 控制历史记录侧边栏的显示
+const historyItems = ref([]); // 存储所有历史记录
+const filteredHistory = ref([]); // 存储过滤后的历史记录
+const historySearchQuery = ref(''); // 历史记录搜索查询
+
+// 搜索相关变量
+const searchQuery = ref(''); // 搜索框的值
+
 // 初始化
 onMounted(() => {
   loadSites();
   loadBackgroundImage();
   loadSettings();
+  loadHistory(); // 加载浏览历史
 });
+
+// 切换历史记录侧边栏
+function toggleHistorySidebar() {
+  showHistorySidebar.value = !showHistorySidebar.value;
+  // 如果打开侧边栏，重新加载历史记录
+  if (showHistorySidebar.value) {
+    loadHistory();
+  }
+}
+
+// 加载浏览历史
+function loadHistory() {
+  // 检查是否有权限访问浏览历史
+  if (chrome.history) {
+    // 获取最近100条历史记录
+    chrome.history.search({
+      text: '', // 空字符串表示获取所有历史记录
+      startTime: 0, // 从时间原点开始
+      maxResults: 100 // 最多获取100条
+    }, (results) => {
+      historyItems.value = results;
+      filteredHistory.value = results;
+      console.log('加载的历史记录:', results);
+    });
+  } else {
+    console.error('无法访问浏览历史，需要添加history权限');
+  }
+}
+
+// 搜索历史记录
+function searchHistory() {
+  const query = historySearchQuery.value.toLowerCase();
+  if (!query) {
+    filteredHistory.value = historyItems.value;
+    return;
+  }
+  
+  filteredHistory.value = historyItems.value.filter(item => {
+    const title = (item.title || '').toLowerCase();
+    const url = item.url.toLowerCase();
+    return title.includes(query) || url.includes(query);
+  });
+}
+
+// 打开历史记录项
+function openHistoryItem(item) {
+  window.location.href = item.url;
+}
+
+// 格式化日期
+function formatDate(timestamp) {
+  const date = new Date(timestamp);
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
+// 处理必应搜索表单提交
+function handleSearchSubmit() {
+  // 使用响应式数据获取搜索值
+  const query = searchQuery.value.trim();
+  
+  // 如果搜索框为空，不触发搜索
+  if (!query) {
+    return;
+  }
+  
+  // 正常提交搜索表单
+  window.location.href = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
+}
 
 // 从Chrome存储加载网站数据
 function loadSites() {
