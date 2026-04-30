@@ -4,6 +4,16 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { dirname } from 'path'
 
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+
+function sanitizeFileName(name) {
+  if (name.startsWith('_')) {
+    return 'chunk' + name.slice(1)
+  }
+  return name
+}
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [vue()],
@@ -19,11 +29,22 @@ export default defineConfig({
       },
       output: {
         entryFileNames: chunkInfo => {
-          // 为不同的入口文件设置不同的输出名称
           if (chunkInfo.name === 'background' || chunkInfo.name === 'content') {
             return `${chunkInfo.name}.js`
           }
           return 'assets/[name]-[hash].js'
+        },
+        chunkFileNames: chunkInfo => {
+          const name = sanitizeFileName(chunkInfo.name)
+          return `assets/${name}-[hash].js`
+        },
+        assetFileNames: assetInfo => {
+          const name = assetInfo.name || 'asset'
+          const sanitized = sanitizeFileName(name)
+          if (sanitized.endsWith('.css')) {
+            return `assets/[name]-[hash][extname]`
+          }
+          return `assets/[name]-[hash][extname]`
         }
       }
     }
