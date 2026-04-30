@@ -1,173 +1,323 @@
 <template>
-  <div class="app-container">
-    <!-- 历史记录和设置按钮 -->
+  <div class="app-container" :class="{ 'no-transition': !settings.animationEnabled }">
+    <ParticleBackground v-if="settings.particleBackground" />
+    
     <div class="settings-btn-container">
-      <!-- 历史记录按钮 -->
       <button 
-        id="history-btn" 
-        class="settings-btn" 
+        class="settings-btn icon-btn" 
         @click="toggleHistorySidebar"
-        :style="{ backgroundColor: `rgba(255, 255, 255, ${settingsOpacity})` }"
-      >📜</button>
-      <!-- 设置按钮 -->
+        :style="{ backgroundColor: `rgba(255, 255, 255, ${settings.opacity})` }"
+        title="浏览历史"
+      >
+        <span class="btn-icon">📜</span>
+      </button>
       <button 
-        id="settings-btn" 
-        class="settings-btn" 
-        @click="openBackgroundModal"
-        :style="{ backgroundColor: `rgba(255, 255, 255, ${settingsOpacity})` }"
-      >⚙️</button>
+        class="settings-btn icon-btn" 
+        @click="toggleSettingsPanel"
+        :style="{ backgroundColor: `rgba(255, 255, 255, ${settings.opacity})` }"
+        title="设置"
+      >
+        <span class="btn-icon">⚙️</span>
+      </button>
     </div>
     
-    <!-- 历史记录弹窗遮罩层 -->
     <div 
       class="sidebar-overlay" 
-      v-if="showHistorySidebar"
-      @click="toggleHistorySidebar"
+      v-if="showHistorySidebar || showSettingsPanel"
+      @click="closeAllPanels"
     ></div>
     
-    <!-- 历史记录侧边栏 -->
     <div class="history-sidebar" :class="{ 'sidebar-open': showHistorySidebar }">
       <div class="sidebar-header">
         <h3>浏览历史</h3>
-        <button class="sidebar-close-btn" @click="toggleHistorySidebar">×</button>
-      </div>
-      <div class="sidebar-content">
-        <!-- 搜索框 -->
-        <div class="search-box">
-          <input 
-            type="text" 
-            id="history-search" 
-            placeholder="搜索浏览历史..." 
-            v-model="historySearchQuery"
-            @input="searchHistory"
+        <div class="sidebar-actions">
+          <button 
+            class="action-btn" 
+            @click="toggleHistoryBatchMode"
+            :class="{ 'active': historyBatchMode }"
+            title="批量操作"
           >
+            <span v-if="!historyBatchMode">☑️</span>
+            <span v-else>✓</span>
+          </button>
+          <button class="action-btn" @click="clearAllHistory" title="清空历史">🗑️</button>
+          <button class="sidebar-close-btn" @click="toggleHistorySidebar">×</button>
         </div>
-        <!-- 历史记录列表 -->
+      </div>
+      
+      <div class="sidebar-content">
+        <div class="history-filters">
+          <div class="filter-row">
+            <input 
+              type="text" 
+              class="filter-input" 
+              placeholder="搜索历史..." 
+              v-model="historySearchQuery"
+              @input="searchHistory"
+            >
+          </div>
+          <div class="filter-row">
+            <select class="filter-select" v-model="historyTimeFilter" @change="filterHistory">
+              <option value="all">全部时间</option>
+              <option value="today">今天</option>
+              <option value="week">最近7天</option>
+              <option value="month">最近30天</option>
+            </select>
+            <select class="filter-select" v-model="historySortOrder" @change="sortHistory">
+              <option value="desc">最新优先</option>
+              <option value="asc">最旧优先</option>
+            </select>
+          </div>
+        </div>
+        
+        <div class="history-batch-actions" v-if="historyBatchMode && selectedHistoryItems.length > 0">
+          <span class="batch-info">已选 {{ selectedHistoryItems.length }} 项</span>
+          <button class="batch-delete-btn" @click="deleteSelectedHistory">删除选中</button>
+          <button class="batch-select-btn" @click="toggleSelectAllHistory">
+            {{ allHistorySelected ? '取消全选' : '全选' }}
+          </button>
+        </div>
+        
         <div class="history-list">
           <div 
             class="history-item" 
             v-for="(item, index) in filteredHistory" 
             :key="index"
-            @click="openHistoryItem(item)"
+            :class="{ 'selected': selectedHistoryItems.includes(index), 'batch-mode': historyBatchMode }"
+            @click="handleHistoryItemClick(item, index)"
           >
+            <div class="history-checkbox" v-if="historyBatchMode" @click.stop="toggleHistorySelection(index)">
+              <span v-if="selectedHistoryItems.includes(index)">✓</span>
+            </div>
+            <img 
+              class="history-favicon" 
+              :src="getFaviconUrl(item.url)" 
+              alt=""
+              @error="handleFaviconError"
+            >
             <div class="history-item-content">
               <div class="history-item-title">{{ item.title || item.url }}</div>
               <div class="history-item-url">{{ item.url }}</div>
               <div class="history-item-time">{{ formatDate(item.lastVisitTime) }}</div>
             </div>
+            <div class="history-item-actions" v-if="!historyBatchMode">
+              <button class="item-action-btn" @click.stop="deleteHistoryItem(index)" title="删除">×</button>
+            </div>
           </div>
-          <div class="no-history" v-if="filteredHistory.length === 0">
+          
+          <div class="no-history" v-if="filteredHistory.length === 0 && !isLoadingHistory">
             {{ historySearchQuery ? '没有找到匹配的历史记录' : '没有浏览历史记录' }}
           </div>
+          
+          <div class="loading-history" v-if="isLoadingHistory">
+            加载中...
+          </div>
         </div>
       </div>
     </div>
     
-    <div class="container">
-      <div class="search-section">
-        <form id="bing-search" @submit.prevent="handleSearchSubmit">
-          <input type="text" name="q" id="search-input" placeholder="在必应中搜索..." autocomplete="off" v-model="searchQuery">
-          <button type="submit" id="search-btn">搜索</button>
-        </form>
+    <div class="settings-panel" :class="{ 'panel-open': showSettingsPanel }">
+      <div class="sidebar-header">
+        <h3>设置</h3>
+        <button class="sidebar-close-btn" @click="toggleSettingsPanel">×</button>
       </div>
       
-      <div class="nav-section" :style="{ backgroundColor: `rgba(255, 255, 255, ${navOpacity})` }">
-        <div class="nav-grid" id="nav-grid">
-          <div 
-            v-for="(site, index) in sites" 
-            :key="index"
-            class="site-item"
-            draggable="true"
-            @click="openSite(site)"
-            @dragstart="handleDragStart($event, index)"
-            @dragend="handleDragEnd"
-            @dragover="handleDragOver($event)"
-            @dragleave="handleDragLeave"
-            @drop="handleDrop($event, index)"
-            :data-index="index"
-          >
-            <span class="edit-icon" @click.stop="openEditModal(index)">✎</span>
-            <img class="site-icon" :src="siteIcons[site.icon] || 'icon48.png'" :alt="site.name">
-            <span class="site-name">{{ site.name }}</span>
+      <div class="sidebar-content">
+        <div class="settings-section">
+          <div class="accordion-header" @click="toggleAccordion('appearance')">
+            <span>🎨 外观设置</span>
+            <span class="accordion-icon" :class="{ 'open': accordions.appearance }">▼</span>
           </div>
-        </div>
-      </div>
-    </div>
-    
-    <!-- 编辑弹窗 -->
-    <div id="edit-modal" class="modal" v-if="showEditModal">
-      <div class="modal-content">
-        <span class="close" @click="closeEditModal">&times;</span>
-        <h3>{{ currentEditIndex === null ? '添加网站' : '编辑网站' }}</h3>
-        <form id="edit-form" @submit.prevent="handleFormSubmit">
-          <div class="form-group">
-            <label for="site-name">网站名称:</label>
-            <input type="text" id="site-name" v-model="formData.name" required>
-          </div>
-          <div class="form-group">
-            <label for="site-url">网站URL:</label>
-            <input type="url" id="site-url" v-model="formData.url" required>
-          </div>
-          <div class="form-actions">
-            <button 
-              type="button" 
-              id="delete-btn" 
-              v-if="currentEditIndex !== null"
-              @click="handleDelete"
-            >
-              删除
-            </button>
-            <button type="submit">保存</button>
-          </div>
-        </form>
-      </div>
-    </div>
-    
-    <!-- 背景设置弹窗 -->
-    <div id="background-modal" class="modal" v-if="showBackgroundModal">
-      <div class="modal-content">
-        <span class="close" @click="closeBackgroundModal">&times;</span>
-        <h3>设置</h3>
-        <div class="background-options">
-          <div class="background-option">
-            <h4>背景设置</h4>
-            <div class="background-option-item">
-              <h5>默认背景</h5>
-              <div class="background-preview default-bg" @click="setDefaultBackground"></div>
+          <div class="accordion-content" :class="{ 'open': accordions.appearance }">
+            <div class="setting-item">
+              <label class="setting-label">
+                <span>粒子背景</span>
+                <div class="toggle-switch" :class="{ 'active': settings.particleBackground }" @click="toggleSetting('particleBackground')">
+                  <div class="toggle-slider"></div>
+                </div>
+              </label>
             </div>
-            <div class="background-option-item">
-              <h5>本地上传图片</h5>
-              <!-- 图片预览 -->
-              <div class="image-preview-container" v-if="imagePreview">
-                <h6>图片预览:</h6>
-                <div class="image-preview" :style="{ backgroundImage: `url('${imagePreview}')` }"></div>
-              </div>
-              <div class="form-group">
-                <label for="bg-file">选择图片:</label>
-                <input type="file" id="bg-file" accept="image/*" @change="handleFileUpload">
-              </div>
+            <div class="setting-item">
+              <label class="setting-label">
+                <span>动画效果</span>
+                <div class="toggle-switch" :class="{ 'active': settings.animationEnabled }" @click="toggleSetting('animationEnabled')">
+                  <div class="toggle-slider"></div>
+                </div>
+              </label>
             </div>
-          </div>
-          <div class="background-option">
-            <h4>透明度设置</h4>
-            <div class="form-group">
-              <label for="opacity-slider">不透明度: {{ Math.round((Number(opacity) || 0) * 100) }}%</label>
+            <div class="setting-item">
+              <label class="setting-label">
+                <span>不透明度: {{ Math.round(settings.opacity * 100) }}%</span>
+              </label>
               <input 
                 type="range" 
-                id="opacity-slider" 
+                class="slider-input"
                 min="0.1" 
                 max="1" 
                 step="0.1" 
-                v-model.number="opacity"
-                @input="updateOpacity"
+                :value="settings.opacity"
+                @input="updateOpacity($event.target.value)"
               >
             </div>
           </div>
-          <div class="background-option">
-            <h4>数据管理</h4>
-            <div class="form-actions data-management">
-              <button type="button" @click="exportData">导出数据</button>
-              <button type="button" @click="triggerImport">导入数据</button>
+        </div>
+        
+        <div class="settings-section">
+          <div class="accordion-header" @click="toggleAccordion('search')">
+            <span>🔍 搜索设置</span>
+            <span class="accordion-icon" :class="{ 'open': accordions.search }">▼</span>
+          </div>
+          <div class="accordion-content" :class="{ 'open': accordions.search }">
+            <div class="setting-item">
+              <label class="setting-label">默认搜索引擎</label>
+              <div class="engine-list">
+                <div 
+                  v-for="engine in settings.searchEngines" 
+                  :key="engine.id"
+                  class="engine-item"
+                  :class="{ 'active': settings.defaultSearchEngine === engine.id }"
+                  @click="setDefaultSearchEngine(engine.id)"
+                >
+                  <span class="engine-icon">{{ engine.icon }}</span>
+                  <span class="engine-name">{{ engine.name }}</span>
+                  <span class="engine-check" v-if="settings.defaultSearchEngine === engine.id">✓</span>
+                </div>
+              </div>
+            </div>
+            <div class="setting-item">
+              <label class="setting-label">搜索历史</label>
+              <div class="search-history-list" v-if="settings.searchHistory.length > 0">
+                <div 
+                  v-for="(query, index) in settings.searchHistory.slice(0, 10)" 
+                  :key="index"
+                  class="search-history-item"
+                >
+                  <span class="history-query">{{ query }}</span>
+                  <button class="history-remove" @click="removeSearchHistory(index)">×</button>
+                </div>
+              </div>
+              <div class="no-history" v-else>暂无搜索历史</div>
+              <button class="clear-history-btn" v-if="settings.searchHistory.length > 0" @click="clearSearchHistory">
+                清空搜索历史
+              </button>
+            </div>
+          </div>
+        </div>
+        
+        <div class="settings-section">
+          <div class="accordion-header" @click="toggleAccordion('categories')">
+            <span>📁 分类管理</span>
+            <span class="accordion-icon" :class="{ 'open': accordions.categories }">▼</span>
+          </div>
+          <div class="accordion-content" :class="{ 'open': accordions.categories }">
+            <div class="category-list">
+              <div 
+                v-for="category in settings.categories" 
+                :key="category.id"
+                class="category-item"
+              >
+                <div class="category-color" :style="{ backgroundColor: category.color }"></div>
+                <input 
+                  type="text" 
+                  class="category-name-input"
+                  :value="category.name"
+                  @input="updateCategoryName(category.id, $event.target.value)"
+                >
+                <div class="category-actions">
+                  <input 
+                    type="color" 
+                    class="category-color-picker"
+                    :value="category.color"
+                    @input="updateCategoryColor(category.id, $event.target.value)"
+                  >
+                  <button 
+                    class="category-delete" 
+                    v-if="category.id !== 'default'"
+                    @click="deleteCategory(category.id)"
+                  >×</button>
+                </div>
+              </div>
+            </div>
+            <button class="add-category-btn" @click="addCategory">
+              + 添加分类
+            </button>
+          </div>
+        </div>
+        
+        <div class="settings-section">
+          <div class="accordion-header" @click="toggleAccordion('backup')">
+            <span>💾 数据备份</span>
+            <span class="accordion-icon" :class="{ 'open': accordions.backup }">▼</span>
+          </div>
+          <div class="accordion-content" :class="{ 'open': accordions.backup }">
+            <div class="setting-item">
+              <label class="setting-label">
+                <span>自动备份</span>
+                <div class="toggle-switch" :class="{ 'active': settings.backupSettings.enabled }" @click="toggleAutoBackup">
+                  <div class="toggle-slider"></div>
+                </div>
+              </label>
+            </div>
+            <div class="setting-item" v-if="settings.backupSettings.enabled">
+              <label class="setting-label">
+                <span>备份间隔: {{ settings.backupSettings.interval }} 天</span>
+              </label>
+              <input 
+                type="range" 
+                class="slider-input"
+                min="1" 
+                max="30" 
+                step="1" 
+                :value="settings.backupSettings.interval"
+                @input="updateBackupInterval($event.target.value)"
+              >
+            </div>
+            <div class="backup-list">
+              <h4>现有备份</h4>
+              <div class="backup-items" v-if="backups.length > 0">
+                <div v-for="backup in backups" :key="backup.timestamp" class="backup-item">
+                  <span class="backup-time">{{ formatBackupTime(backup.timestamp) }}</span>
+                  <div class="backup-actions">
+                    <button class="backup-restore" @click="restoreBackup(backup)">恢复</button>
+                    <button class="backup-delete" @click="deleteBackup(backup.timestamp)">删除</button>
+                  </div>
+                </div>
+              </div>
+              <div class="no-backup" v-else>暂无备份</div>
+            </div>
+            <div class="backup-manual">
+              <button class="backup-now-btn" @click="createBackup">立即备份</button>
+            </div>
+          </div>
+        </div>
+        
+        <div class="settings-section">
+          <div class="accordion-header" @click="toggleAccordion('security')">
+            <span>🔒 安全设置</span>
+            <span class="accordion-icon" :class="{ 'open': accordions.security }">▼</span>
+          </div>
+          <div class="accordion-content" :class="{ 'open': accordions.security }">
+            <div class="setting-item">
+              <label class="setting-label">
+                <span>加密存储</span>
+                <div class="toggle-switch" :class="{ 'active': settings.encryptionEnabled }" @click="toggleEncryption">
+                  <div class="toggle-slider"></div>
+                </div>
+              </label>
+              <p class="setting-hint">启用后数据将被加密存储</p>
+            </div>
+          </div>
+        </div>
+        
+        <div class="settings-section">
+          <div class="accordion-header" @click="toggleAccordion('data')">
+            <span>📊 数据管理</span>
+            <span class="accordion-icon" :class="{ 'open': accordions.data }">▼</span>
+          </div>
+          <div class="accordion-content" :class="{ 'open': accordions.data }">
+            <div class="data-actions">
+              <button class="data-btn export-btn" @click="exportData">📤 导出数据</button>
+              <button class="data-btn import-btn" @click="triggerImport">📥 导入数据</button>
               <input 
                 type="file" 
                 id="import-file" 
@@ -176,106 +326,423 @@
                 @change="importData"
               >
             </div>
+            <div class="reset-section">
+              <button class="reset-btn" @click="confirmReset">🔄 一键还原</button>
+              <p class="reset-hint">警告：这将清除所有数据并恢复默认设置</p>
+            </div>
           </div>
         </div>
       </div>
+    </div>
+    
+    <div class="container">
+      <div class="search-section">
+        <form id="bing-search" @submit.prevent="handleSearchSubmit" class="search-form">
+          <div class="search-wrapper">
+            <button type="button" class="search-engine-toggle" @click="toggleSearchEngineMenu">
+              {{ currentSearchEngine?.icon || '🔍' }}
+            </button>
+            <input 
+              type="text" 
+              class="search-input" 
+              placeholder="搜索..." 
+              autocomplete="off" 
+              v-model="searchQuery"
+              @focus="showSearchSuggestions = true"
+              @blur="hideSearchSuggestions"
+            >
+            <button type="submit" class="search-btn">
+              <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"></circle>
+                <path d="M21 21l-4.35-4.35"></path>
+              </svg>
+            </button>
+          </div>
+          
+          <div class="search-engine-menu" v-if="showSearchEngineMenu" @click.stop>
+            <div 
+              v-for="engine in settings.searchEngines" 
+              :key="engine.id"
+              class="engine-menu-item"
+              :class="{ 'active': settings.defaultSearchEngine === engine.id }"
+              @click="selectSearchEngine(engine.id)"
+            >
+              <span class="engine-icon">{{ engine.icon }}</span>
+              <span class="engine-name">{{ engine.name }}</span>
+            </div>
+          </div>
+          
+          <div class="search-suggestions" v-if="showSearchSuggestions && searchSuggestions.length > 0">
+            <div 
+              v-for="(suggestion, index) in searchSuggestions" 
+              :key="index"
+              class="suggestion-item"
+              @mousedown="selectSuggestion(suggestion)"
+            >
+              <span class="suggestion-icon">🕐</span>
+              <span class="suggestion-text">{{ suggestion }}</span>
+            </div>
+          </div>
+        </form>
+      </div>
+      
+      <div class="category-tabs">
+        <div 
+          v-for="category in filteredCategories" 
+          :key="category.id"
+          class="category-tab"
+          :class="{ 'active': selectedCategory === category.id }"
+          @click="selectCategory(category.id)"
+        >
+          <div class="tab-indicator" :style="{ backgroundColor: category.color }"></div>
+          <span class="tab-name">{{ category.name }}</span>
+          <span class="tab-count">({{ getCategorySiteCount(category.id) }})</span>
+        </div>
+        <div class="category-tab add-tab" @click="toggleNavBatchMode" :class="{ 'active': navBatchMode }">
+          <span class="tab-name">{{ navBatchMode ? '完成' : '批量操作' }}</span>
+        </div>
+      </div>
+      
+      <div 
+        class="nav-section" 
+        :style="{ backgroundColor: `rgba(255, 255, 255, ${settings.opacity})` }"
+      >
+        <div class="nav-batch-actions" v-if="navBatchMode">
+          <span class="batch-info">已选 {{ selectedNavItems.length }} 项</span>
+          <div class="batch-controls">
+            <select class="batch-select" v-model="batchMoveCategory">
+              <option value="">移动到分类...</option>
+              <option v-for="cat in settings.categories" :key="cat.id" :value="cat.id">
+                {{ cat.name }}
+              </option>
+            </select>
+            <button class="batch-action-btn" @click="moveSelectedToCategory" v-if="batchMoveCategory">
+              移动
+            </button>
+            <button class="batch-action-btn danger" @click="deleteSelectedNavItems">
+              删除选中
+            </button>
+            <button class="batch-action-btn" @click="toggleSelectAllNavItems">
+              {{ allNavItemsSelected ? '取消全选' : '全选' }}
+            </button>
+          </div>
+        </div>
+        
+        <div class="nav-grid" id="nav-grid">
+          <div 
+            v-for="(site, index) in filteredSites" 
+            :key="index"
+            class="site-item"
+            :class="{ 
+              'dragging': dragIndex === index,
+              'dragover': dragOverIndex === index,
+              'selected': selectedNavItems.includes(site.originalIndex),
+              'batch-mode': navBatchMode
+            }"
+            draggable="!navBatchMode"
+            @click="handleSiteClick(site, site.originalIndex)"
+            @dragstart="handleDragStart($event, site.originalIndex)"
+            @dragend="handleDragEnd"
+            @dragover="handleDragOver($event, index)"
+            @dragleave="handleDragLeave"
+            @drop="handleDrop($event, index)"
+          >
+            <div class="site-checkbox" v-if="navBatchMode" @click.stop="toggleNavSelection(site.originalIndex)">
+              <span v-if="selectedNavItems.includes(site.originalIndex)">✓</span>
+            </div>
+            <div class="edit-icon" @click.stop="openEditModal(site.originalIndex)" v-if="!navBatchMode">✎</div>
+            <img class="site-icon" :src="siteIcons[site.icon] || getFaviconUrl(site.url)" :alt="site.name">
+            <span class="site-name">{{ site.name }}</span>
+            <div class="site-category" :style="{ backgroundColor: getCategoryColor(site.category) }">
+              {{ getCategoryName(site.category) }}
+            </div>
+          </div>
+          
+          <div class="site-item add-site" @click="openAddSiteModal" v-if="!navBatchMode">
+            <div class="add-icon">+</div>
+            <span class="site-name">添加网站</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <transition name="modal">
+      <div class="modal" v-if="showEditModal" @click.self="closeEditModal">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>{{ currentEditIndex === null ? '添加网站' : '编辑网站' }}</h3>
+            <span class="close" @click="closeEditModal">&times;</span>
+          </div>
+          <form @submit.prevent="handleFormSubmit">
+            <div class="form-group">
+              <label for="site-name">网站名称</label>
+              <input type="text" id="site-name" v-model="formData.name" required>
+            </div>
+            <div class="form-group">
+              <label for="site-url">网站URL</label>
+              <input type="url" id="site-url" v-model="formData.url" required>
+            </div>
+            <div class="form-group">
+              <label for="site-category">分类</label>
+              <select id="site-category" v-model="formData.category">
+                <option v-for="cat in settings.categories" :key="cat.id" :value="cat.id">
+                  {{ cat.name }}
+                </option>
+              </select>
+            </div>
+            <div class="form-actions">
+              <button 
+                type="button" 
+                class="btn btn-danger"
+                v-if="currentEditIndex !== null"
+                @click="handleDelete"
+              >
+                删除
+              </button>
+              <button type="button" class="btn btn-secondary" @click="closeEditModal">取消</button>
+              <button type="submit" class="btn btn-primary">保存</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </transition>
+    
+    <transition name="modal">
+      <div class="modal confirm-modal" v-if="showConfirmModal" @click.self="closeConfirmModal">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>{{ confirmTitle }}</h3>
+          </div>
+          <p class="confirm-message">{{ confirmMessage }}</p>
+          <div class="form-actions">
+            <button class="btn btn-secondary" @click="closeConfirmModal">取消</button>
+            <button class="btn btn-primary" @click="executeConfirmAction">确认</button>
+          </div>
+        </div>
+      </div>
+    </transition>
+    
+    <div class="toast-container">
+      <transition-group name="toast">
+        <div 
+          v-for="toast in toasts" 
+          :key="toast.id"
+          class="toast"
+          :class="toast.type"
+        >
+          {{ toast.message }}
+        </div>
+      </transition-group>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue';
-
-// 引入localforage
+import { ref, reactive, computed, onMounted, watch } from 'vue';
 import localforage from 'localforage';
+import ParticleBackground from './components/ParticleBackground.vue';
+import dataManager, { DEFAULT_CONFIG } from './utils/dataManager.js';
 
-// 初始化localforage
 localforage.config({
   name: 'NewTab',
   storeName: 'localDatas',
   description: '存储新标签页的背景图片'
 });
 
-// 全局变量
+const settings = reactive({
+  ...DEFAULT_CONFIG
+});
+
 const sites = ref([]);
 const currentEditIndex = ref(null);
 const backgroundImage = ref(null);
 const showEditModal = ref(false);
-const showBackgroundModal = ref(false);
-const formData = ref({ name: '', url: '', icon: '' });
-const imagePreview = ref(null); // 图片预览URL
-const opacity = ref(0.9); // 透明度，默认0.9
-const navOpacity = ref(opacity.value); // 导航区透明度
-const settingsOpacity = ref(opacity.value); // 设置按钮透明度
-const siteIcons = ref({}); // 存储图标映射，键为site.icon，值为base64图标数据
+const formData = ref({ name: '', url: '', icon: '', category: 'default' });
+const siteIcons = ref({});
+const opacity = ref(0.9);
 
-// 历史记录相关变量
-const showHistorySidebar = ref(false); // 控制历史记录侧边栏的显示
-const historyItems = ref([]); // 存储所有历史记录
-const filteredHistory = ref([]); // 存储过滤后的历史记录
-const historySearchQuery = ref(''); // 历史记录搜索查询
+const showHistorySidebar = ref(false);
+const showSettingsPanel = ref(false);
+const historyItems = ref([]);
+const filteredHistory = ref([]);
+const historySearchQuery = ref('');
+const historyTimeFilter = ref('all');
+const historySortOrder = ref('desc');
+const historyBatchMode = ref(false);
+const selectedHistoryItems = ref([]);
+const isLoadingHistory = ref(false);
 
-// 搜索相关变量
-const searchQuery = ref(''); // 搜索框的值
-
-// 初始化
-onMounted(() => {
-  loadSites();
-  loadBackgroundImage();
-  loadSettings();
-  loadHistory(); // 加载浏览历史
+const searchQuery = ref('');
+const showSearchEngineMenu = ref(false);
+const showSearchSuggestions = ref(false);
+const searchSuggestions = ref([]);
+const currentSearchEngine = computed(() => {
+  return settings.searchEngines.find(e => e.id === settings.defaultSearchEngine);
 });
 
-// 切换历史记录侧边栏
-function toggleHistorySidebar() {
-  showHistorySidebar.value = !showHistorySidebar.value;
-  // 如果打开侧边栏，重新加载历史记录
-  if (showHistorySidebar.value) {
-    loadHistory();
-  }
-}
-
-// 加载浏览历史
-function loadHistory() {
-  // 检查是否有权限访问浏览历史
-  if (chrome.history) {
-    // 获取最近100条历史记录
-    chrome.history.search({
-      text: '', // 空字符串表示获取所有历史记录
-      startTime: 0, // 从时间原点开始
-      maxResults: 100 // 最多获取100条
-    }, (results) => {
-      historyItems.value = results;
-      filteredHistory.value = results;
-      console.log('加载的历史记录:', results);
+const selectedCategory = ref('all');
+const filteredCategories = computed(() => {
+  return [
+    { id: 'all', name: '全部', color: '#6366f1' },
+    ...settings.categories
+  ];
+});
+const filteredSites = computed(() => {
+  return sites.value
+    .map((site, index) => ({ ...site, originalIndex: index }))
+    .filter(site => {
+      if (selectedCategory.value === 'all') return true;
+      return site.category === selectedCategory.value;
     });
+});
+
+const navBatchMode = ref(false);
+const selectedNavItems = ref([]);
+const batchMoveCategory = ref('');
+
+const accordions = reactive({
+  appearance: true,
+  search: false,
+  categories: false,
+  backup: false,
+  security: false,
+  data: false
+});
+
+const backups = ref([]);
+const toasts = ref([]);
+let toastId = 0;
+
+const showConfirmModal = ref(false);
+const confirmTitle = ref('');
+const confirmMessage = ref('');
+let confirmAction = null;
+
+const dragIndex = ref(null);
+const dragOverIndex = ref(null);
+
+const allHistorySelected = computed(() => {
+  return selectedHistoryItems.value.length === filteredHistory.value.length && filteredHistory.value.length > 0;
+});
+
+const allNavItemsSelected = computed(() => {
+  return selectedNavItems.value.length === filteredSites.value.length && filteredSites.value.length > 0;
+});
+
+function showToast(message, type = 'success') {
+  const id = ++toastId;
+  toasts.value.push({ id, message, type });
+  setTimeout(() => {
+    const index = toasts.value.findIndex(t => t.id === id);
+    if (index > -1) toasts.value.splice(index, 1);
+  }, 3000);
+}
+
+function showConfirm(title, message, action) {
+  confirmTitle.value = title;
+  confirmMessage.value = message;
+  confirmAction = action;
+  showConfirmModal.value = true;
+}
+
+function closeConfirmModal() {
+  showConfirmModal.value = false;
+  confirmAction = null;
+}
+
+function executeConfirmAction() {
+  if (confirmAction) {
+    confirmAction();
+  }
+  closeConfirmModal();
+}
+
+onMounted(async () => {
+  await dataManager.init();
+  await loadAllSettings();
+  await loadSites();
+  await loadBackups();
+  applyBackgroundImage();
+});
+
+async function loadAllSettings() {
+  const savedSettings = await dataManager.loadAllData();
+  Object.assign(settings, savedSettings);
+  opacity.value = settings.opacity;
+}
+
+async function loadBackups() {
+  backups.value = await dataManager.loadBackups();
+}
+
+function toggleAccordion(key) {
+  accordions[key] = !accordions[key];
+}
+
+function toggleSetting(key) {
+  settings[key] = !settings[key];
+  saveSettings();
+}
+
+async function toggleEncryption() {
+  if (settings.encryptionEnabled) {
+    const disabled = await dataManager.disableEncryption();
+    if (disabled) {
+      settings.encryptionEnabled = false;
+      showToast('加密已禁用');
+    }
   } else {
-    console.error('无法访问浏览历史，需要添加history权限');
+    const enabled = await dataManager.enableEncryption();
+    if (enabled) {
+      settings.encryptionEnabled = true;
+      showToast('加密已启用');
+    }
   }
 }
 
-// 搜索历史记录
-function searchHistory() {
-  const query = historySearchQuery.value.toLowerCase();
-  if (!query) {
-    filteredHistory.value = historyItems.value;
-    return;
+function toggleAutoBackup() {
+  settings.backupSettings.enabled = !settings.backupSettings.enabled;
+  saveSettings();
+}
+
+function updateBackupInterval(value) {
+  settings.backupSettings.interval = parseInt(value);
+  saveSettings();
+}
+
+async function createBackup() {
+  try {
+    await dataManager.createBackup();
+    await loadBackups();
+    showToast('备份创建成功');
+  } catch (error) {
+    showToast('备份创建失败', 'error');
   }
-  
-  filteredHistory.value = historyItems.value.filter(item => {
-    const title = (item.title || '').toLowerCase();
-    const url = item.url.toLowerCase();
-    return title.includes(query) || url.includes(query);
+}
+
+async function restoreBackup(backup) {
+  showConfirm('恢复备份', '确定要从该备份恢复数据吗？这将覆盖当前数据。', async () => {
+    try {
+      await dataManager.restoreBackup(backup);
+      await loadAllSettings();
+      await loadSites();
+      showToast('数据恢复成功');
+    } catch (error) {
+      showToast('恢复失败', 'error');
+    }
   });
 }
 
-// 打开历史记录项
-function openHistoryItem(item) {
-  window.location.href = item.url;
+async function deleteBackup(timestamp) {
+  try {
+    backups.value = await dataManager.deleteBackup(timestamp);
+    showToast('备份已删除');
+  } catch (error) {
+    showToast('删除失败', 'error');
+  }
 }
 
-// 格式化日期
-function formatDate(timestamp) {
+function formatBackupTime(timestamp) {
   const date = new Date(timestamp);
   return date.toLocaleString('zh-CN', {
     year: 'numeric',
@@ -286,258 +753,483 @@ function formatDate(timestamp) {
   });
 }
 
-// 处理必应搜索表单提交
-function handleSearchSubmit() {
-  // 使用响应式数据获取搜索值
-  const query = searchQuery.value.trim();
-  
-  // 如果搜索框为空，不触发搜索
-  if (!query) {
-    return;
-  }
-  
-  // 正常提交搜索表单
-  window.location.href = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
+function getCategoryName(categoryId) {
+  const cat = settings.categories.find(c => c.id === categoryId);
+  return cat ? cat.name : '默认';
 }
 
-// 从Chrome存储加载网站数据
-function loadSites() {
-  chrome.storage.sync.get(['sites'], (result) => {
-    console.log('从Chrome存储加载的网站数据:', result);
-    let loadedSites = result.sites;
-    
-    if (loadedSites && Array.isArray(loadedSites) && loadedSites.length > 0) {
-      // 加载站点数据，不直接修改sites数组的icon属性
-      sites.value = loadedSites;
-      
-      // 重置图标映射
-      siteIcons.value = {};
-      
-      // 为每个站点加载图标
-      sites.value.forEach(site => {
-        if (site.icon && !site.icon.startsWith('http')) {
-          // 如果图标是存储键（不是URL），从localforage获取图标
-          localforage.getItem(site.icon)
-            .then(iconBase64 => {
-              if (iconBase64) {
-                // 将图标存储到siteIcons映射中，不修改原始sites数组
-                siteIcons.value[site.icon] = iconBase64;
-              }
-            })
-            .catch(error => {
-              console.error(`获取站点图标失败: ${site.name}`, error);
-            });
-        }
-      });
-    }
-    
-    console.log('最终加载的网站数据:', sites.value);
-    console.log('加载的图标映射:', siteIcons.value);
-  });
+function getCategoryColor(categoryId) {
+  const cat = settings.categories.find(c => c.id === categoryId);
+  return cat ? cat.color : '#6366f1';
 }
 
-// 保存网站数据到Chrome存储
-function saveSites() {
-  // 使用JSON序列化/反序列化来移除Proxy包装，确保保存的是纯JavaScript对象
-  const sitesToSave = JSON.parse(JSON.stringify(sites.value));
-  console.log('要保存的网站数据:', sitesToSave);
-  chrome.storage.sync.set({ sites: sitesToSave }, () => {
-    console.log('网站数据已保存');
-  });
+function getCategorySiteCount(categoryId) {
+  if (categoryId === 'all') return sites.value.length;
+  return sites.value.filter(s => s.category === categoryId).length;
 }
 
-// 从localforage加载背景图片
-function loadBackgroundImage() {
-  // 直接从localforage获取背景图片URL
-  localforage.getItem('backgroundImage').then((backgroundImageUrl) => {
-    backgroundImage.value = backgroundImageUrl;
-    
-    // 如果有URL且不是DataURL，尝试从localforage获取缓存的图片
-    if (backgroundImageUrl && !backgroundImageUrl.startsWith('data:')) {
-      localforage.getItem(backgroundImageUrl).then((cachedImage) => {
-        if (cachedImage) {
-          // 使用缓存的图片
-          backgroundImage.value = cachedImage;
-        }
-        applyBackgroundImage();
-      });
-    } else {
-      // 没有URL或已经是DataURL，直接应用
-      applyBackgroundImage();
-    }
-  });
-}
-
-// 保存背景图片到localforage
-function saveBackgroundImage() {
-  // 保存背景图片URL到localforage
-  localforage.setItem('backgroundImage', backgroundImage.value).then(() => {
-    console.log('背景图片URL已保存到localforage');
-  });
-}
-
-// 从Chrome存储加载设置
-function loadSettings() {
-  chrome.storage.sync.get(['opacity'], (result) => {
-    if (result.opacity !== undefined) {
-      // 验证并确保opacity是有效的数值
-      const validOpacity = Math.max(0.1, Math.min(1, Number(result.opacity) || 0.9));
-      opacity.value = validOpacity;
-      updateOpacity();
-    }
-  });
-}
-
-// 保存设置到Chrome存储
-function saveSettings() {
-  // 保存前验证值
-  const validOpacity = Math.max(0.1, Math.min(1, Number(opacity.value) || 0.9));
-  chrome.storage.sync.set({ opacity: validOpacity }, () => {
-    console.log('设置已保存');
-  });
-}
-
-// 更新透明度
-function updateOpacity() {
-  // 确保透明度是有效的数值
-  const validOpacity = Math.max(0.1, Math.min(1, Number(opacity.value) || 0.9));
-  navOpacity.value = validOpacity;
-  settingsOpacity.value = validOpacity;
+function addCategory() {
+  const colors = ['#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899', '#f43f5e', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#06b6d4', '#3b82f6'];
+  const newCategory = {
+    id: `cat-${Date.now()}`,
+    name: `新分类${settings.categories.length + 1}`,
+    color: colors[Math.floor(Math.random() * colors.length)]
+  };
+  settings.categories.push(newCategory);
   saveSettings();
 }
 
-// 导出数据到JSON文件
-async function exportData() {
-  try {
-    // 从localforage获取所有图标数据
-    const allIcons = {};
-    await localforage.iterate((value, key) => {
-      // 只导出图标数据（键以icon-开头）
-      if (key.startsWith('icon-')) {
-        allIcons[key] = value;
-      }
-    });
-    
-    // 准备要导出的数据
-    const exportData = {
-      sites: sites.value,
-      backgroundImage: backgroundImage.value,
-      opacity: opacity.value,
-      siteIcons: allIcons, // 包含所有图标数据
-      exportDate: new Date().toISOString()
-    };
-    
-    // 创建JSON字符串
-    const jsonString = JSON.stringify(exportData, null, 2);
-    
-    // 创建Blob对象
-    const blob = new Blob([jsonString], { type: 'application/json' });
-    
-    // 创建下载链接
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `newtab-export-${new Date().toISOString().slice(0, 10)}.json`;
-    
-    // 触发下载
-    document.body.appendChild(a);
-    a.click();
-    
-    // 清理
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    
-    console.log('数据已导出，包含', Object.keys(allIcons).length, '个图标');
-  } catch (error) {
-    console.error('导出数据失败:', error);
-    alert('导出数据失败，请重试！');
+function updateCategoryName(id, name) {
+  const cat = settings.categories.find(c => c.id === id);
+  if (cat) {
+    cat.name = name;
+    saveSettings();
   }
 }
 
-// 触发导入文件选择
-function triggerImport() {
-  document.getElementById('import-file').click();
+function updateCategoryColor(id, color) {
+  const cat = settings.categories.find(c => c.id === id);
+  if (cat) {
+    cat.color = color;
+    saveSettings();
+  }
 }
 
-// 导入数据
-async function importData(event) {
-  const file = event.target.files[0];
-  if (!file) return;
-  
-  const reader = new FileReader();
-  
-  reader.onload = async (e) => {
-    try {
-      const importData = JSON.parse(e.target.result);
-      
-      // 验证导入的数据格式
-      if (importData.sites && Array.isArray(importData.sites)) {
-        // 显示确认对话框
-        if (confirm('确定要导入数据吗？这将覆盖当前的数据。')) {
-          // 导入数据
-          if (importData.sites) sites.value = importData.sites;
-          if (importData.backgroundImage) backgroundImage.value = importData.backgroundImage;
-          if (importData.opacity !== undefined) {
-            opacity.value = importData.opacity;
-            updateOpacity();
-          }
-          
-          // 导入图标数据到localforage
-          if (importData.siteIcons && typeof importData.siteIcons === 'object') {
-            const iconKeys = Object.keys(importData.siteIcons);
-            console.log('准备导入', iconKeys.length, '个图标');
-            
-            // 先清空现有的图标数据
-            await clearAllIcons();
-            
-            // 逐个保存图标数据
-            for (const key of iconKeys) {
-              if (key.startsWith('icon-')) {
-                await localforage.setItem(key, importData.siteIcons[key]);
-              }
-            }
-            
-            // 更新siteIcons映射
-            siteIcons.value = { ...importData.siteIcons };
-            console.log('成功导入', iconKeys.length, '个图标');
-          }
-          
-          // 保存到Chrome存储
-          saveSites();
-          saveBackgroundImage();
-          saveSettings();
-          
-          // 应用背景图片
-          applyBackgroundImage();
-          
-          console.log('数据已导入');
-          alert('数据导入成功！');
+function deleteCategory(id) {
+  showConfirm('删除分类', '确定要删除这个分类吗？分类下的网站将移至默认分类。', () => {
+    const index = settings.categories.findIndex(c => c.id === id);
+    if (index > -1) {
+      sites.value.forEach(site => {
+        if (site.category === id) {
+          site.category = 'default';
         }
-      } else {
-        alert('导入的数据格式不正确');
+      });
+      settings.categories.splice(index, 1);
+      if (selectedCategory.value === id) {
+        selectedCategory.value = 'all';
       }
-    } catch (error) {
-      console.error('导入数据失败:', error);
-      alert('导入数据失败，请检查文件格式');
-    }
-  };
-  
-  reader.readAsText(file);
-  
-  // 重置文件输入，以便下次可以再次选择同一文件
-  event.target.value = '';
-}
-
-// 清空所有图标数据
-async function clearAllIcons() {
-  await localforage.iterate((value, key) => {
-    if (key.startsWith('icon-')) {
-      return localforage.removeItem(key);
+      saveSettings();
+      saveSites();
     }
   });
 }
 
-// 应用背景图片
+function selectCategory(id) {
+  selectedCategory.value = id;
+}
+
+function toggleHistorySidebar() {
+  showHistorySidebar.value = !showHistorySidebar.value;
+  if (showHistorySidebar.value) {
+    loadHistory();
+  }
+}
+
+function toggleSettingsPanel() {
+  showSettingsPanel.value = !showSettingsPanel.value;
+  if (showSettingsPanel.value) {
+    loadBackups();
+  }
+}
+
+function closeAllPanels() {
+  showHistorySidebar.value = false;
+  showSettingsPanel.value = false;
+}
+
+function loadHistory() {
+  if (!chrome.history) return;
+  
+  isLoadingHistory.value = true;
+  chrome.history.search({
+    text: '',
+    startTime: 0,
+    maxResults: 200
+  }, (results) => {
+    historyItems.value = results;
+    filterHistory();
+    isLoadingHistory.value = false;
+  });
+}
+
+function searchHistory() {
+  filterHistory();
+}
+
+function filterHistory() {
+  let filtered = [...historyItems.value];
+  
+  if (historySearchQuery.value) {
+    const query = historySearchQuery.value.toLowerCase();
+    filtered = filtered.filter(item => {
+      const title = (item.title || '').toLowerCase();
+      const url = item.url.toLowerCase();
+      return title.includes(query) || url.includes(query);
+    });
+  }
+  
+  const now = Date.now();
+  const dayMs = 24 * 60 * 60 * 1000;
+  
+  switch (historyTimeFilter.value) {
+    case 'today':
+      filtered = filtered.filter(item => now - item.lastVisitTime < dayMs);
+      break;
+    case 'week':
+      filtered = filtered.filter(item => now - item.lastVisitTime < 7 * dayMs);
+      break;
+    case 'month':
+      filtered = filtered.filter(item => now - item.lastVisitTime < 30 * dayMs);
+      break;
+  }
+  
+  filteredHistory.value = filtered;
+  sortHistory();
+}
+
+function sortHistory() {
+  filteredHistory.value.sort((a, b) => {
+    if (historySortOrder.value === 'desc') {
+      return b.lastVisitTime - a.lastVisitTime;
+    }
+    return a.lastVisitTime - b.lastVisitTime;
+  });
+}
+
+function handleHistoryItemClick(item, index) {
+  if (historyBatchMode.value) {
+    toggleHistorySelection(index);
+  } else {
+    openHistoryItem(item);
+  }
+}
+
+function openHistoryItem(item) {
+  window.location.href = item.url;
+}
+
+function toggleHistoryBatchMode() {
+  historyBatchMode.value = !historyBatchMode.value;
+  selectedHistoryItems.value = [];
+}
+
+function toggleHistorySelection(index) {
+  const idx = selectedHistoryItems.value.indexOf(index);
+  if (idx > -1) {
+    selectedHistoryItems.value.splice(idx, 1);
+  } else {
+    selectedHistoryItems.value.push(index);
+  }
+}
+
+function toggleSelectAllHistory() {
+  if (allHistorySelected.value) {
+    selectedHistoryItems.value = [];
+  } else {
+    selectedHistoryItems.value = filteredHistory.value.map((_, i) => i);
+  }
+}
+
+function deleteHistoryItem(index) {
+  const item = filteredHistory.value[index];
+  if (item && chrome.history) {
+    showConfirm('删除历史', '确定要删除这条历史记录吗？', () => {
+      chrome.history.deleteUrl({ url: item.url }, () => {
+        loadHistory();
+        showToast('历史记录已删除');
+      });
+    });
+  }
+}
+
+function deleteSelectedHistory() {
+  if (selectedHistoryItems.value.length === 0) return;
+  
+  showConfirm('删除选中', `确定要删除选中的 ${selectedHistoryItems.value.length} 条历史记录吗？`, () => {
+    const urlsToDelete = selectedHistoryItems.value.map(i => filteredHistory.value[i].url);
+    
+    if (chrome.history && chrome.history.deleteUrl) {
+      urlsToDelete.forEach(url => {
+        chrome.history.deleteUrl({ url }, () => {});
+      });
+    }
+    
+    selectedHistoryItems.value = [];
+    loadHistory();
+    showToast('已删除选中的历史记录');
+  });
+}
+
+function clearAllHistory() {
+  showConfirm('清空历史', '确定要清空所有浏览历史记录吗？此操作不可恢复。', () => {
+    if (chrome.history) {
+      chrome.history.deleteAll(() => {
+        loadHistory();
+        showToast('历史记录已清空');
+      });
+    }
+  });
+}
+
+function formatDate(timestamp) {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const diffMs = now - date;
+  const dayMs = 24 * 60 * 60 * 1000;
+  
+  if (diffMs < 60 * 1000) {
+    return '刚刚';
+  } else if (diffMs < 60 * 60 * 1000) {
+    return `${Math.floor(diffMs / (60 * 1000))}分钟前`;
+  } else if (diffMs < dayMs) {
+    return `${Math.floor(diffMs / (60 * 60 * 1000))}小时前`;
+  } else if (diffMs < 7 * dayMs) {
+    return `${Math.floor(diffMs / dayMs)}天前`;
+  }
+  
+  return date.toLocaleDateString('zh-CN', {
+    month: 'short',
+    day: 'numeric'
+  });
+}
+
+function isValidHostname(hostname) {
+  if (!hostname || typeof hostname !== 'string') return false;
+  
+  if (hostname.length < 3 || hostname.length > 255) return false;
+  
+  if (hostname.includes(' ')) return false;
+  
+  if (hostname.includes('..')) return false;
+  
+  if (!hostname.includes('.')) return false;
+  
+  const parts = hostname.split('.');
+  if (parts.length < 2) return false;
+  
+  const tld = parts[parts.length - 1];
+  if (tld.length < 2 || tld.length > 10) return false;
+  
+  if (/^[a-zA-Z]{2,}$/.test(tld) === false) return false;
+  
+  if (/^[^a-zA-Z0-9]/.test(hostname)) return false;
+  if (/[^a-zA-Z0-9]$/.test(hostname)) return false;
+  
+  const suspiciousPatterns = [
+    /^[a-z]{20,}$/i,
+    /^hcmlf/,
+    /^[a-z]+$/,
+  ];
+  
+  for (const pattern of suspiciousPatterns) {
+    if (pattern.test(hostname)) return false;
+  }
+  
+  return true;
+}
+
+function getFaviconUrl(url) {
+  try {
+    if (!url || typeof url !== 'string') {
+      throw new Error('Invalid URL');
+    }
+    
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      throw new Error('URL must start with http:// or https://');
+    }
+    
+    const parsedUrl = new URL(url);
+    const hostname = parsedUrl.hostname;
+    
+    if (!isValidHostname(hostname)) {
+      throw new Error('Invalid hostname');
+    }
+    
+    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=64`;
+  } catch {
+    return 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%236366f1"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>';
+  }
+}
+
+function handleFaviconError(e) {
+  e.target.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%236366f1"><circle cx="12" cy="12" r="10"/></svg>';
+}
+
+function toggleSearchEngineMenu() {
+  showSearchEngineMenu.value = !showSearchEngineMenu.value;
+}
+
+function selectSearchEngine(id) {
+  settings.defaultSearchEngine = id;
+  showSearchEngineMenu.value = false;
+  saveSettings();
+}
+
+function setDefaultSearchEngine(id) {
+  settings.defaultSearchEngine = id;
+  saveSettings();
+  showToast(`已设置 ${settings.searchEngines.find(e => e.id === id)?.name} 为默认搜索引擎`);
+}
+
+function handleSearchSubmit() {
+  const query = searchQuery.value.trim();
+  if (!query) return;
+  
+  if (!settings.searchHistory.includes(query)) {
+    settings.searchHistory.unshift(query);
+    if (settings.searchHistory.length > 50) {
+      settings.searchHistory = settings.searchHistory.slice(0, 50);
+    }
+    saveSettings();
+  }
+  
+  const engine = settings.searchEngines.find(e => e.id === settings.defaultSearchEngine);
+  if (engine) {
+    window.location.href = `${engine.url}${encodeURIComponent(query)}`;
+  }
+}
+
+watch(searchQuery, (newQuery) => {
+  if (newQuery) {
+    searchSuggestions.value = settings.searchHistory
+      .filter(q => q.toLowerCase().includes(newQuery.toLowerCase()))
+      .slice(0, 5);
+  } else {
+    searchSuggestions.value = settings.searchHistory.slice(0, 5);
+  }
+});
+
+function selectSuggestion(query) {
+  searchQuery.value = query;
+  setTimeout(() => handleSearchSubmit(), 50);
+}
+
+function hideSearchSuggestions() {
+  setTimeout(() => {
+    showSearchSuggestions.value = false;
+  }, 200);
+}
+
+function removeSearchHistory(index) {
+  settings.searchHistory.splice(index, 1);
+  saveSettings();
+}
+
+function clearSearchHistory() {
+  showConfirm('清空搜索历史', '确定要清空所有搜索历史吗？', () => {
+    settings.searchHistory = [];
+    saveSettings();
+    showToast('搜索历史已清空');
+  });
+}
+
+function toggleNavBatchMode() {
+  navBatchMode.value = !navBatchMode.value;
+  selectedNavItems.value = [];
+}
+
+function handleSiteClick(site, originalIndex) {
+  if (navBatchMode.value) {
+    toggleNavSelection(originalIndex);
+  } else {
+    openSite(site);
+  }
+}
+
+function toggleNavSelection(originalIndex) {
+  const idx = selectedNavItems.value.indexOf(originalIndex);
+  if (idx > -1) {
+    selectedNavItems.value.splice(idx, 1);
+  } else {
+    selectedNavItems.value.push(originalIndex);
+  }
+}
+
+function toggleSelectAllNavItems() {
+  if (allNavItemsSelected.value) {
+    selectedNavItems.value = [];
+  } else {
+    selectedNavItems.value = filteredSites.value.map(s => s.originalIndex);
+  }
+}
+
+function moveSelectedToCategory() {
+  if (!batchMoveCategory.value || selectedNavItems.value.length === 0) return;
+  
+  selectedNavItems.value.forEach(index => {
+    if (sites.value[index]) {
+      sites.value[index].category = batchMoveCategory.value;
+    }
+  });
+  
+  selectedNavItems.value = [];
+  batchMoveCategory.value = '';
+  saveSites();
+  showToast('已移动到新分类');
+}
+
+function deleteSelectedNavItems() {
+  if (selectedNavItems.value.length === 0) return;
+  
+  showConfirm('删除选中', `确定要删除选中的 ${selectedNavItems.value.length} 个网站吗？`, () => {
+    const sortedIndices = [...selectedNavItems.value].sort((a, b) => b - a);
+    sortedIndices.forEach(index => {
+      if (sites.value[index]) {
+        sites.value.splice(index, 1);
+      }
+    });
+    
+    selectedNavItems.value = [];
+    saveSites();
+    showToast('已删除选中的网站');
+  });
+}
+
+async function loadSites() {
+  const savedSites = await dataManager.loadData('sites', []);
+  sites.value = savedSites;
+  
+  siteIcons.value = {};
+  for (const site of sites.value) {
+    if (site.icon && !site.icon.startsWith('http')) {
+      try {
+        const iconBase64 = await localforage.getItem(site.icon);
+        if (iconBase64) {
+          siteIcons.value[site.icon] = iconBase64;
+        }
+      } catch (e) {
+        console.error('加载图标失败:', e);
+      }
+    }
+  }
+}
+
+async function saveSites() {
+  await dataManager.saveData('sites', JSON.parse(JSON.stringify(sites.value)));
+}
+
+async function saveSettings() {
+  await dataManager.saveData('opacity', settings.opacity);
+  await dataManager.saveData('categories', settings.categories);
+  await dataManager.saveData('searchEngines', settings.searchEngines);
+  await dataManager.saveData('defaultSearchEngine', settings.defaultSearchEngine);
+  await dataManager.saveData('searchHistory', settings.searchHistory);
+  await dataManager.saveData('backupSettings', settings.backupSettings);
+  await dataManager.saveData('encryptionEnabled', settings.encryptionEnabled);
+  await dataManager.saveData('animationEnabled', settings.animationEnabled);
+  await dataManager.saveData('particleBackground', settings.particleBackground);
+}
+
+function updateOpacity(value) {
+  settings.opacity = parseFloat(value);
+  opacity.value = settings.opacity;
+  saveSettings();
+}
+
+async function loadBackgroundImage() {
+  backgroundImage.value = await localforage.getItem('backgroundImage');
+}
+
 function applyBackgroundImage() {
   if (backgroundImage.value) {
     document.body.style.backgroundImage = `url('${backgroundImage.value}')`;
@@ -546,165 +1238,186 @@ function applyBackgroundImage() {
   }
 }
 
-// 打开网站
 function openSite(site) {
   window.location.href = site.url;
 }
 
-// 打开编辑弹窗
 function openEditModal(index) {
   currentEditIndex.value = index;
   
   if (index === null) {
-    // 添加新网站
-    formData.value = { name: '', url: '', icon: '' };
+    formData.value = { name: '', url: '', icon: '', category: 'default' };
   } else {
-    // 编辑现有网站
     formData.value = { ...sites.value[index] };
   }
   
   showEditModal.value = true;
-  // 自动聚焦到第一个输入框
-  setTimeout(() => {
-    document.getElementById('site-name')?.focus();
-  }, 100);
 }
 
-// 关闭编辑弹窗
+function openAddSiteModal() {
+  openEditModal(null);
+}
+
 function closeEditModal() {
   showEditModal.value = false;
   currentEditIndex.value = null;
 }
 
-// 关闭背景弹窗
-function closeBackgroundModal() {
-  showBackgroundModal.value = false;
-  imagePreview.value = null;
-}
-
-// 打开背景弹窗
-function openBackgroundModal() {
-  showBackgroundModal.value = true;
-}
-
-// 处理表单提交
 async function handleFormSubmit() {
   const siteName = formData.value.name.trim();
   const siteUrl = formData.value.url.trim();
   const iconBase64 = formData.value.icon.trim() || '';
   
-  // 创建网站对象
   const site = {
     name: siteName,
     url: siteUrl,
-    icon: iconBase64 // 先保存完整的base64数据到内存中
+    icon: '',
+    category: formData.value.category || 'default'
   };
   
-  if (currentEditIndex.value === null) {
-    // 添加新网站
-    sites.value.push(site);
-  } else {
-    // 更新现有网站
-    sites.value[currentEditIndex.value] = site;
+  if (iconBase64) {
+    const iconKey = `icon-${hashString(siteUrl)}`;
+    await localforage.setItem(iconKey, iconBase64);
+    site.icon = iconKey;
   }
   
-  // 保存网站数据到Chrome存储
+  if (currentEditIndex.value === null) {
+    sites.value.push(site);
+    showToast('网站已添加');
+  } else {
+    sites.value[currentEditIndex.value] = site;
+    showToast('网站已更新');
+  }
+  
   saveSites();
   closeEditModal();
 }
 
-// 处理删除网站
 function handleDelete() {
   if (currentEditIndex.value !== null) {
-    if (confirm('确定要删除这个网站吗？')) {
+    showConfirm('删除网站', '确定要删除这个网站吗？', () => {
       sites.value.splice(currentEditIndex.value, 1);
       saveSites();
       closeEditModal();
-    }
+      showToast('网站已删除');
+    });
   }
 }
 
-// 设置默认背景
-function setDefaultBackground() {
-  backgroundImage.value = null;
-  applyBackgroundImage();
-  saveBackgroundImage();
-  closeBackgroundModal();
+function hashString(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return Math.abs(hash).toString(16);
 }
 
-// 处理本地文件上传
-function handleFileUpload(event) {
+async function exportData() {
+  try {
+    const data = await dataManager.exportFullData();
+    const jsonString = JSON.stringify(data, null, 2);
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `newtab-export-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    showToast('数据导出成功');
+  } catch (error) {
+    showToast('导出失败', 'error');
+  }
+}
+
+function triggerImport() {
+  document.getElementById('import-file').click();
+}
+
+async function importData(event) {
   const file = event.target.files[0];
   if (!file) return;
   
-  // 检查文件类型是否为图片
-  if (!file.type.startsWith('image/')) {
-    alert('请选择图片文件！');
-    return;
-  }
-  
-  // 读取文件并转换为DataURL
   const reader = new FileReader();
-  
-  reader.onload = (e) => {
-    const dataUrl = e.target.result;
-    // 显示图片预览
-    imagePreview.value = dataUrl;
-    // 设置为背景图片
-    backgroundImage.value = dataUrl;
-    applyBackgroundImage();
-    saveBackgroundImage();
-    // 不自动关闭弹窗
+  reader.onload = async (e) => {
+    try {
+      const importData = JSON.parse(e.target.result);
+      
+      showConfirm('导入数据', '确定要导入数据吗？这将覆盖当前的数据。', async () => {
+        await dataManager.importFullData(importData);
+        await loadAllSettings();
+        await loadSites();
+        applyBackgroundImage();
+        showToast('数据导入成功');
+      });
+    } catch (error) {
+      showToast('导入失败，请检查文件格式', 'error');
+    }
   };
-  
-  reader.onerror = () => {
-    alert('图片读取失败，请重试！');
-  };
-  
-  // 读取文件
-  reader.readAsDataURL(file);
+  reader.readAsText(file);
+  event.target.value = '';
 }
 
-// 拖拽事件处理
+function confirmReset() {
+  showConfirm('一键还原', '警告：这将清除所有数据并恢复默认设置！此操作不可恢复。', async () => {
+    await dataManager.resetToDefault();
+    await loadAllSettings();
+    await loadSites();
+    sites.value = [];
+    backgroundImage.value = null;
+    applyBackgroundImage();
+    showToast('已恢复默认设置');
+  });
+}
+
 function handleDragStart(e, index) {
   e.dataTransfer.setData('text/plain', index);
+  dragIndex.value = index;
   e.currentTarget.classList.add('dragging');
 }
 
 function handleDragEnd(e) {
+  dragIndex.value = null;
+  dragOverIndex.value = null;
   e.currentTarget.classList.remove('dragging');
-  // 移除所有dragover类
   document.querySelectorAll('.dragover').forEach(el => {
     el.classList.remove('dragover');
   });
 }
 
-function handleDragOver(e) {
+function handleDragOver(e, index) {
   e.preventDefault();
+  dragOverIndex.value = index;
   e.currentTarget.classList.add('dragover');
 }
 
 function handleDragLeave(e) {
+  dragOverIndex.value = null;
   e.currentTarget.classList.remove('dragover');
 }
 
 function handleDrop(e, dropIndex) {
   e.preventDefault();
+  dragOverIndex.value = null;
   e.currentTarget.classList.remove('dragover');
   
   const draggingIndex = parseInt(e.dataTransfer.getData('text/plain'));
   
-  // 创建新的数组，移动拖拽的元素到新位置
-  const newSitesOrder = [...sites.value];
-  const [draggedItem] = newSitesOrder.splice(draggingIndex, 1);
-  newSitesOrder.splice(dropIndex, 0, draggedItem);
-  
-  // 更新sites数组并保存
-  sites.value = newSitesOrder;
-  saveSites();
+  if (draggingIndex !== dropIndex) {
+    const newSitesOrder = [...sites.value];
+    const [draggedItem] = newSitesOrder.splice(draggingIndex, 1);
+    newSitesOrder.splice(dropIndex, 0, draggedItem);
+    sites.value = newSitesOrder;
+    saveSites();
+  }
 }
 </script>
 
 <style scoped>
-/* 样式将在单独的style.css中引入 */
+/* 样式将在全局style.css中定义 */
 </style>
