@@ -147,13 +147,53 @@ function getPageIconFromBackground() {
   });
 }
 
+function isValidHostname(hostname) {
+  if (!hostname || typeof hostname !== 'string') return false;
+  
+  if (hostname.length < 3 || hostname.length > 255) return false;
+  
+  if (hostname.includes(' ')) return false;
+  
+  if (hostname.includes('..')) return false;
+  
+  if (!hostname.includes('.')) return false;
+  
+  const parts = hostname.split('.');
+  if (parts.length < 2) return false;
+  
+  const tld = parts[parts.length - 1];
+  if (tld.length < 2 || tld.length > 10) return false;
+  
+  if (/^[a-zA-Z]{2,}$/.test(tld) === false) return false;
+  
+  if (/^[^a-zA-Z0-9]/.test(hostname)) return false;
+  if (/[^a-zA-Z0-9]$/.test(hostname)) return false;
+  
+  return true;
+}
+
 async function getSiteIcon(url) {
   const base64Icon = await getPageIconFromBackground();
   if (base64Icon) {
     formData.icon = base64Icon;
   } else {
     try {
-      const googleFaviconUrl = `https://www.google.com/s2/favicons?domain=${new URL(url).hostname}&sz=64`;
+      if (!url || typeof url !== 'string') {
+        throw new Error('Invalid URL');
+      }
+      
+      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        throw new Error('URL must start with http:// or https://');
+      }
+      
+      const parsedUrl = new URL(url);
+      const hostname = parsedUrl.hostname;
+      
+      if (!isValidHostname(hostname)) {
+        throw new Error('Invalid hostname');
+      }
+      
+      const googleFaviconUrl = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=64`;
       formData.icon = googleFaviconUrl;
     } catch (e) {
       console.error('解析URL失败:', e);
