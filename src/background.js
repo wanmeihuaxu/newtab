@@ -1,4 +1,4 @@
-// 监听来自popup的消息
+// 监听来自popup和content脚本的消息
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('Background收到消息:', message);
   

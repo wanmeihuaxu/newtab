@@ -18,7 +18,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // 带超时的fetch包装
 function fetchWithTimeout(url, { timeout = 2000, json = false } = {}) {
   return Promise.race([
-    fetch(url, { mode: 'cors' }).then(r => {
+    fetch(url).then(r => {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return json ? r.json() : r.blob();
     }),
@@ -67,14 +67,9 @@ async function getPageIconAsBase64() {
   const { origin, hostname } = window.location;
   
   const strategies = [
-    // DuckDuckGo 图标服务
-    async () => {
-      const blob = await fetchWithTimeout(`https://icons.duckduckgo.com/ip3/${hostname}.ico`);
-      return blobToBase64(blob);
-    },
     // xxapi.cn 接口
     async () => {
-      const json = await fetchWithTimeout(`https://v2.xxapi.cn/api/ico?url=${encodeURIComponent(`${origin}`)}`, { json: true });
+      const json = await fetchWithTimeout(`https://v2.xxapi.cn/api/ico?url=${encodeURIComponent(origin)}`, { json: true });
       if (json.code !== 200 || !json.data) throw new Error(json.msg || 'API返回错误');
       return convertImageToBase64(json.data);
     },
@@ -86,9 +81,7 @@ async function getPageIconAsBase64() {
       throw new Error('无可用的本地图标');
     },
     // 默认 favicon.ico
-    () => convertImageToBase64(`${origin}/favicon.ico`),
-    // DuckDuckGo 最终回退
-    () => convertImageToBase64(`https://icons.duckduckgo.com/ip3/${hostname}.ico`)
+    () => convertImageToBase64(`${origin}/favicon.ico`)
   ];
   
   for (const strategy of strategies) {
