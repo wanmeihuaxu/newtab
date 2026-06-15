@@ -430,10 +430,10 @@ function saveBackgroundImage() {
 function loadSettings() {
   chrome.storage.sync.get(['opacity', 'iconBorderRadius', 'iconSize', 'iconOpacity'], (result) => {
     if (result.opacity !== undefined) {
-      // 验证并确保opacity是有效的数值
       const validOpacity = Math.max(0.1, Math.min(1, Number(result.opacity) || 0.9));
       opacity.value = validOpacity;
-      updateOpacity();
+      navOpacity.value = validOpacity;
+      settingsOpacity.value = validOpacity;
     }
     if (result.iconBorderRadius !== undefined) {
       iconBorderRadius.value = Math.max(0, Math.min(50, Number(result.iconBorderRadius) || 50));
