@@ -116,9 +116,9 @@ async function getSiteIcon(url) {
   if (base64Icon) {
     formData.value.icon = base64Icon;
   } else {
-    // 如果获取失败，使用Google Favicon Service作为备选
-    const googleFaviconUrl = `https://www.google.com/s2/favicons?domain=${new URL(url).hostname}&sz=64`;
-    formData.value.icon = googleFaviconUrl;
+    // 如果获取失败，使用 DuckDuckGo 图标服务作为备选
+    const ddgFaviconUrl = `https://icons.duckduckgo.com/ip3/${new URL(url).hostname}.ico`;
+    formData.value.icon = ddgFaviconUrl;
   }
 }
 

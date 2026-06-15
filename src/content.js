@@ -3,113 +3,97 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('Content脚本收到消息:', message);
   
   if (message.action === 'getPageIcon') {
-    // 获取页面图标并转换为base64
     getPageIconAsBase64()
-      .then(base64Icon => {
-        sendResponse({ success: true, data: base64Icon });
-      })
+      .then(data => sendResponse({ success: true, data }))
       .catch(error => {
         console.error('获取或转换图标失败:', error);
         sendResponse({ success: false, error: error.message });
       });
-    
-    // 保持消息通道开放，直到异步操作完成
     return true;
   }
   
   return false;
 });
 
-// 获取页面图标并转换为base64格式
-async function getPageIconAsBase64() {
-  try {
-    // 1. 获取页面中所有的图标URL
-    const iconUrls = getIconUrlsFromPage();
-    
-    // 2. 如果没有找到图标，使用默认的favicon路径
-    if (iconUrls.length === 0) {
-      iconUrls.push(`${window.location.origin}/favicon.ico`);
-    }
-    
-    // 3. 尝试获取并转换第一个可用的图标
-    for (const iconUrl of iconUrls) {
-      try {
-        const base64Icon = await convertImageUrlToBase64(iconUrl);
-        return base64Icon;
-      } catch (error) {
-        console.error(`获取图标失败: ${iconUrl}`, error);
-        // 尝试下一个图标URL
-        continue;
-      }
-    }
-    
-    // 4. 如果所有图标都获取失败，使用Google Favicon Service作为备选
-    const googleFaviconUrl = `https://www.google.com/s2/favicons?domain=${window.location.hostname}&sz=64`;
-    return await convertImageUrlToBase64(googleFaviconUrl);
-  } catch (error) {
-    console.error('获取页面图标失败:', error);
-    throw error;
-  }
+// 带超时的fetch包装
+function fetchWithTimeout(url, { timeout = 2000, json = false } = {}) {
+  return Promise.race([
+    fetch(url, { mode: 'cors' }).then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return json ? r.json() : r.blob();
+    }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), timeout))
+  ]);
+}
+
+// 将blob转换为base64
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+// 将图片URL转换为base64格式
+function convertImageToBase64(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 128;
+      canvas.getContext('2d').drawImage(img, 0, 0, 128, 128);
+      resolve(canvas.toDataURL('image/png'));
+      canvas.remove();
+    };
+    img.onerror = () => reject(new Error('图片加载失败'));
+    img.src = url;
+  });
 }
 
 // 从页面中获取所有图标URL
 function getIconUrlsFromPage() {
-  const iconUrls = [];
-  
-  // 获取所有link标签
-  const linkTags = document.querySelectorAll('link');
-  
-  // 查找rel属性为icon或shortcut icon的标签
-  linkTags.forEach(tag => {
-    const rel = tag.getAttribute('rel');
-    if (rel && (rel.toLowerCase() === 'icon' || rel.toLowerCase() === 'shortcut icon')) {
-      const href = tag.getAttribute('href');
-      if (href) {
-        // 如果是相对路径，转换为绝对路径
-        const absoluteUrl = new URL(href, window.location.origin).href;
-        iconUrls.push(absoluteUrl);
-      }
-    }
-  });
-  
-  return iconUrls;
+  return [...document.querySelectorAll('link')]
+    .filter(tag => /^(shortcut )?icon$/i.test(tag.getAttribute('rel')))
+    .map(tag => tag.getAttribute('href'))
+    .filter(Boolean)
+    .map(href => new URL(href, window.location.origin).href);
 }
 
-// 将图片URL转换为base64格式
-function convertImageUrlToBase64(url) {
-  return new Promise((resolve, reject) => {
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    const img = new Image();
-    
-    // 允许跨域图片
-    img.crossOrigin = 'anonymous';
-    
-    img.onload = () => {
-      try {
-        // 设置canvas大小
-        const size = 128;
-        canvas.width = size;
-        canvas.height = size;
-        
-        // 绘制图片
-        ctx.drawImage(img, 0, 0, size, size);
-        
-        // 转换为base64
-        const base64Data = canvas.toDataURL('image/png');
-        resolve(base64Data);
-        
-        // 清理
-        canvas.remove();
-      } catch (error) {
-        reject(new Error('图片绘制失败'));
+// 获取页面图标并转换为base64格式
+async function getPageIconAsBase64() {
+  const { origin, hostname } = window.location;
+  
+  const strategies = [
+    // DuckDuckGo 图标服务
+    async () => {
+      const blob = await fetchWithTimeout(`https://icons.duckduckgo.com/ip3/${hostname}.ico`);
+      return blobToBase64(blob);
+    },
+    // xxapi.cn 接口
+    async () => {
+      const json = await fetchWithTimeout(`https://v2.xxapi.cn/api/ico?url=${encodeURIComponent(`${origin}`)}`, { json: true });
+      if (json.code !== 200 || !json.data) throw new Error(json.msg || 'API返回错误');
+      return convertImageToBase64(json.data);
+    },
+    // 本地页面图标
+    async () => {
+      for (const url of getIconUrlsFromPage()) {
+        try { return await convertImageToBase64(url); } catch (e) { /* continue */ }
       }
-    };
-    
-    img.onerror = () => {
-      reject(new Error('图片加载失败'));
-    };
-    
-    img.src = url;
-  });
+      throw new Error('无可用的本地图标');
+    },
+    // 默认 favicon.ico
+    () => convertImageToBase64(`${origin}/favicon.ico`),
+    // DuckDuckGo 最终回退
+    () => convertImageToBase64(`https://icons.duckduckgo.com/ip3/${hostname}.ico`)
+  ];
+  
+  for (const strategy of strategies) {
+    try { return await strategy(); } catch (e) { console.log('图标获取策略失败:', e.message); }
+  }
+  
+  throw new Error('所有图标获取策略均失败');
 }

@@ -87,7 +87,7 @@
             :data-index="index"
           >
             <span class="edit-icon" @click.stop="openEditModal(index)">✎</span>
-            <img class="site-icon" :src="siteIcons[site.icon] || 'icon48.png'" :alt="site.name">
+            <img class="site-icon" :src="siteIcons[site.icon] || 'icon48.png'" :alt="site.name" :style="{ borderRadius: `${iconBorderRadius}%`, width: `${iconSize}px`, height: `${iconSize}px`, opacity: iconOpacity }">
             <span class="site-name">{{ site.name }}</span>
           </div>
         </div>
@@ -97,8 +97,11 @@
     <!-- 编辑弹窗 -->
     <div id="edit-modal" class="modal" v-if="showEditModal">
       <div class="modal-content">
-        <span class="close" @click="closeEditModal">&times;</span>
-        <h3>{{ currentEditIndex === null ? '添加网站' : '编辑网站' }}</h3>
+        <div class="modal-header">
+          <h3>{{ currentEditIndex === null ? '添加网站' : '编辑网站' }}</h3>
+          <span class="close" @click="closeEditModal">&times;</span>
+        </div>
+        <div class="modal-body">
         <form id="edit-form" @submit.prevent="handleFormSubmit">
           <div class="form-group">
             <label for="site-name">网站名称:</label>
@@ -120,14 +123,18 @@
             <button type="submit">保存</button>
           </div>
         </form>
+        </div>
       </div>
     </div>
     
     <!-- 背景设置弹窗 -->
-    <div id="background-modal" class="modal" v-if="showBackgroundModal">
-      <div class="modal-content">
-        <span class="close" @click="closeBackgroundModal">&times;</span>
-        <h3>设置</h3>
+    <div id="background-modal" class="modal" v-if="showBackgroundModal" @click.self="saveAndCloseBackgroundModal">
+      <div class="modal-content" @click.stop>
+        <div class="modal-header">
+          <h3>设置</h3>
+          <span class="close" @click="closeBackgroundModal">&times;</span>
+        </div>
+        <div class="modal-body">
         <div class="background-options">
           <div class="background-option">
             <h4>背景设置</h4>
@@ -164,6 +171,45 @@
             </div>
           </div>
           <div class="background-option">
+            <h4>图标设置</h4>
+            <div class="form-group">
+              <label for="icon-radius-slider">图标圆角: {{ iconBorderRadius }}%</label>
+              <input 
+                type="range" 
+                id="icon-radius-slider" 
+                min="0" 
+                max="50" 
+                step="1" 
+                v-model.number="iconBorderRadius"
+                @input="updateIconSettings"
+              >
+            </div>
+            <div class="form-group">
+              <label for="icon-size-slider">图标大小: {{ iconSize }}px</label>
+              <input 
+                type="range" 
+                id="icon-size-slider" 
+                min="24" 
+                max="96" 
+                step="2" 
+                v-model.number="iconSize"
+                @input="updateIconSettings"
+              >
+            </div>
+            <div class="form-group">
+              <label for="icon-opacity-slider">图标不透明度: {{ Math.round((Number(iconOpacity) || 0) * 100) }}%</label>
+              <input 
+                type="range" 
+                id="icon-opacity-slider" 
+                min="0.1" 
+                max="1" 
+                step="0.1" 
+                v-model.number="iconOpacity"
+                @input="updateIconSettings"
+              >
+            </div>
+          </div>
+          <div class="background-option">
             <h4>数据管理</h4>
             <div class="form-actions data-management">
               <button type="button" @click="exportData">导出数据</button>
@@ -177,6 +223,7 @@
               >
             </div>
           </div>
+        </div>
         </div>
       </div>
     </div>
@@ -208,6 +255,9 @@ const opacity = ref(0.9); // 透明度，默认0.9
 const navOpacity = ref(opacity.value); // 导航区透明度
 const settingsOpacity = ref(opacity.value); // 设置按钮透明度
 const siteIcons = ref({}); // 存储图标映射，键为site.icon，值为base64图标数据
+const iconBorderRadius = ref(50); // 图标圆角百分比，默认50（圆形）
+const iconSize = ref(48); // 图标大小（像素），默认48
+const iconOpacity = ref(1); // 图标不透明度，默认1
 
 // 历史记录相关变量
 const showHistorySidebar = ref(false); // 控制历史记录侧边栏的显示
@@ -378,12 +428,21 @@ function saveBackgroundImage() {
 
 // 从Chrome存储加载设置
 function loadSettings() {
-  chrome.storage.sync.get(['opacity'], (result) => {
+  chrome.storage.sync.get(['opacity', 'iconBorderRadius', 'iconSize', 'iconOpacity'], (result) => {
     if (result.opacity !== undefined) {
       // 验证并确保opacity是有效的数值
       const validOpacity = Math.max(0.1, Math.min(1, Number(result.opacity) || 0.9));
       opacity.value = validOpacity;
       updateOpacity();
+    }
+    if (result.iconBorderRadius !== undefined) {
+      iconBorderRadius.value = Math.max(0, Math.min(50, Number(result.iconBorderRadius) || 50));
+    }
+    if (result.iconSize !== undefined) {
+      iconSize.value = Math.max(24, Math.min(96, Number(result.iconSize) || 48));
+    }
+    if (result.iconOpacity !== undefined) {
+      iconOpacity.value = Math.max(0.1, Math.min(1, Number(result.iconOpacity) || 1));
     }
   });
 }
@@ -392,7 +451,15 @@ function loadSettings() {
 function saveSettings() {
   // 保存前验证值
   const validOpacity = Math.max(0.1, Math.min(1, Number(opacity.value) || 0.9));
-  chrome.storage.sync.set({ opacity: validOpacity }, () => {
+  const validIconBorderRadius = Math.max(0, Math.min(50, Number(iconBorderRadius.value) || 50));
+  const validIconSize = Math.max(24, Math.min(96, Number(iconSize.value) || 48));
+  const validIconOpacity = Math.max(0.1, Math.min(1, Number(iconOpacity.value) || 1));
+  chrome.storage.sync.set({ 
+    opacity: validOpacity,
+    iconBorderRadius: validIconBorderRadius,
+    iconSize: validIconSize,
+    iconOpacity: validIconOpacity
+  }, () => {
     console.log('设置已保存');
   });
 }
@@ -403,6 +470,14 @@ function updateOpacity() {
   const validOpacity = Math.max(0.1, Math.min(1, Number(opacity.value) || 0.9));
   navOpacity.value = validOpacity;
   settingsOpacity.value = validOpacity;
+  saveSettings();
+}
+
+// 更新图标设置
+function updateIconSettings() {
+  iconBorderRadius.value = Math.max(0, Math.min(50, Number(iconBorderRadius.value) || 50));
+  iconSize.value = Math.max(24, Math.min(96, Number(iconSize.value) || 48));
+  iconOpacity.value = Math.max(0.1, Math.min(1, Number(iconOpacity.value) || 1));
   saveSettings();
 }
 
@@ -423,6 +498,9 @@ async function exportData() {
       sites: sites.value,
       backgroundImage: backgroundImage.value,
       opacity: opacity.value,
+      iconBorderRadius: iconBorderRadius.value,
+      iconSize: iconSize.value,
+      iconOpacity: iconOpacity.value,
       siteIcons: allIcons, // 包含所有图标数据
       exportDate: new Date().toISOString()
     };
@@ -480,6 +558,15 @@ async function importData(event) {
           if (importData.opacity !== undefined) {
             opacity.value = importData.opacity;
             updateOpacity();
+          }
+          if (importData.iconBorderRadius !== undefined) {
+            iconBorderRadius.value = importData.iconBorderRadius;
+          }
+          if (importData.iconSize !== undefined) {
+            iconSize.value = importData.iconSize;
+          }
+          if (importData.iconOpacity !== undefined) {
+            iconOpacity.value = importData.iconOpacity;
           }
           
           // 导入图标数据到localforage
@@ -580,6 +667,12 @@ function closeEditModal() {
 function closeBackgroundModal() {
   showBackgroundModal.value = false;
   imagePreview.value = null;
+}
+
+// 保存设置并关闭背景弹窗
+function saveAndCloseBackgroundModal() {
+  saveSettings();
+  closeBackgroundModal();
 }
 
 // 打开背景弹窗
